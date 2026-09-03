@@ -41,6 +41,13 @@ const BURST_SIZE = 220;
 const BURST_LEN = 3;
 
 /**
+ * How long the number takes to pop in once it's allowed back on screen --
+ * mirrors the ~0.2s ease-out transition the reference board uses whenever it
+ * swaps between states, rather than snapping straight in.
+ */
+const POP_IN = 0.22;
+
+/**
  * The whole board: starfield, perspective grid and curve on a canvas, with the
  * carrot-and-bunny and crash clips as Lottie layers on top of it (both pulled
  * from the reference board's own assets). Keeping the number on the canvas
@@ -73,6 +80,7 @@ export function CrashCanvas({ phase, multiplier, phaseEndsAt }: Props) {
     const tip = { x: 0, y: 0 };
     let prevPhase: Phase | null = null;
     let burstStart: number | null = null;
+    let numberSince: number | null = null;
 
     const carrotAnim: AnimationItem = lottie.loadAnimation({
       container: carrotEl,
@@ -106,10 +114,6 @@ export function CrashCanvas({ phase, multiplier, phaseEndsAt }: Props) {
       carrotEl.style.height = `${carrotSize}px`;
       burstEl.style.width = `${burstSize}px`;
       burstEl.style.height = `${burstSize}px`;
-      // Dead centre of the board, not the curve's tip -- the burst reads as
-      // the round's outcome, not as a continuation of where it happened.
-      burstEl.style.left = `${width / 2}px`;
-      burstEl.style.top = `${height / 2}px`;
     };
 
     resize();
@@ -139,9 +143,18 @@ export function CrashCanvas({ phase, multiplier, phaseEndsAt }: Props) {
       prevPhase = board.phase;
 
       const burstAge = burstStart !== null ? elapsed - burstStart : null;
-      burstEl.style.visibility = burstAge !== null && burstAge < BURST_LEN ? "visible" : "hidden";
+      const burstPlaying = burstAge !== null && burstAge < BURST_LEN;
+      burstEl.classList.toggle("crash-burst--active", burstPlaying);
 
-      draw(ctx, width, height, board, stars, elapsed, tip, carrotSize, burstAge);
+      // The number gets its own quick pop the instant it's allowed back on
+      // screen -- at the start of a fresh flight, or once the burst has had
+      // its moment -- rather than snapping straight in.
+      const showNumber = board.phase !== "betting" && !(board.phase === "crashed" && burstPlaying);
+      if (showNumber && numberSince === null) numberSince = elapsed;
+      if (!showNumber) numberSince = null;
+      const numberAge = numberSince !== null ? elapsed - numberSince : null;
+
+      draw(ctx, width, height, board, stars, elapsed, tip, carrotSize, numberAge);
       frame = requestAnimationFrame(render);
     };
     frame = requestAnimationFrame(render);
@@ -158,7 +171,7 @@ export function CrashCanvas({ phase, multiplier, phaseEndsAt }: Props) {
     <>
       <canvas ref={canvasRef} className="crash-canvas" />
       <div ref={carrotRef} className="crash-lottie" />
-      <div ref={burstRef} className="crash-lottie" />
+      <div ref={burstRef} className="crash-burst" />
     </>
   );
 }
@@ -185,7 +198,7 @@ function draw(
   elapsed: number,
   tip: { x: number; y: number },
   carrotSize: number,
-  burstAge: number | null,
+  numberAge: number | null,
 ) {
   ctx.clearRect(0, 0, width, height);
   ctx.fillStyle = "#000000";
@@ -205,10 +218,7 @@ function draw(
     return;
   }
 
-  // The burst clip gets the crashed phase to itself; the coefficient only
-  // takes over once it has fully played out.
-  const holdingForBurst = board.phase === "crashed" && burstAge !== null && burstAge < BURST_LEN;
-  if (!holdingForBurst) drawMultiplier(ctx, width, height, board, 1);
+  if (numberAge !== null) drawMultiplier(ctx, width, height, board, numberAge);
 }
 
 function drawStars(
@@ -366,10 +376,8 @@ function drawMultiplier(
   width: number,
   height: number,
   board: Board,
-  alpha: number,
+  age: number,
 ) {
-  if (alpha <= 0) return;
-
   const text = `x${format(board.multiplier)}`;
   const tone = board.phase === "crashed" ? CRASH : GREEN;
   // While it's flying the carrot owns the right side of the board, so the
@@ -378,8 +386,13 @@ function drawMultiplier(
   // with, so it gets the big centred reveal back.
   const compact = board.phase === "flying";
 
+  // Ease-out cubic, settling from slightly below and a touch smaller rather
+  // than snapping straight to full size in place.
+  const t = Math.min(age / POP_IN, 1);
+  const eased = 1 - Math.pow(1 - t, 3);
+
   ctx.save();
-  ctx.globalAlpha = alpha;
+  ctx.globalAlpha = eased;
   // Fit by measuring rather than trusting a fixed size: without SF Pro the
   // stack falls back to a noticeably wider face, and a hard-coded 96px then
   // stretches the number right across the board.
@@ -393,7 +406,13 @@ function drawMultiplier(
   ctx.fillStyle = `rgb(${tone})`;
   ctx.shadowColor = `rgb(${tone})`;
   ctx.shadowBlur = board.phase === "crashed" ? 34 : 20;
-  ctx.fillText(text, compact ? width * 0.07 : width / 2, height * 0.38);
+
+  const x = compact ? width * 0.07 : width / 2;
+  const y = height * 0.38;
+  const scale = 0.85 + 0.15 * eased;
+  ctx.translate(x, y + (1 - eased) * height * 0.03);
+  ctx.scale(scale, scale);
+  ctx.fillText(text, 0, 0);
   ctx.restore();
 }
 

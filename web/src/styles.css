@@ -141,6 +141,24 @@ body {
   visibility: hidden;
 }
 
+/* The burst sits at a fixed point (board centre), so unlike .crash-lottie it
+   can afford a transition -- nothing is fighting it for the position every
+   frame the way the carrot's left/top are. */
+.crash-burst {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  pointer-events: none;
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(0.6);
+  transition: opacity 220ms ease-out, transform 220ms ease-out;
+}
+
+.crash-burst--active {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+}
+
 /* ---------- history ---------- */
 
 .history {

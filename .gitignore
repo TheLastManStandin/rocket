@@ -1,0 +1,7 @@
+.env
+/bin/
+/racketka
+/web/node_modules/
+/web/dist/
+.idea/
+.DS_Store

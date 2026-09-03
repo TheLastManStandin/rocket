@@ -1,0 +1,19 @@
+.PHONY: db dev build test tidy front
+
+db:
+	docker compose up -d
+
+test:
+	go test ./...
+
+build: front
+	go build -o bin/racketka ./cmd/server
+
+front:
+	cd web && npm install && npm run build
+
+dev:
+	go run ./cmd/server
+
+tidy:
+	go mod tidy && gofmt -w .

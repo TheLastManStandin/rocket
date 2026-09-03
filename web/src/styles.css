@@ -1,0 +1,389 @@
+/*
+ * Phone only. The Mini App never opens on a desktop, so there are no
+ * breakpoints here -- just a column sized to the viewport with Telegram's safe
+ * areas kept clear.
+ *
+ * Type and colour follow the measurements taken off the live board: SF Pro
+ * Display where the device has it, a pure-green multiplier with a 20px glow,
+ * and a near-black ground.
+ */
+
+:root {
+  --bg: #000000;
+  --card: #17171a;
+  --card-soft: #1f1f23;
+  --line: #2a2a2f;
+  --text: #ffffff;
+  --dim: #8e8e93;
+  --green: #35d17a;
+  --blue-a: #4b83ff;
+  --blue-b: #2f5fe0;
+  --gold: #f0a020;
+  --red: #e53935;
+  --radius: 16px;
+
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+/* The Mini App is a phone layout wherever it opens. On a wide screen it stays a
+   phone-width column down the middle and the rest of the window is left black,
+   rather than stretching into a shape the design was never drawn for. */
+#root {
+  display: flex;
+  justify-content: center;
+  background: var(--bg);
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, "SF Pro Display", "SF Pro Text", Inter, system-ui, sans-serif;
+  font-size: 16px;
+  line-height: 1.4;
+  overscroll-behavior: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+.screen {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 430px;
+  height: 100dvh;
+  padding: env(safe-area-inset-top) 12px calc(env(safe-area-inset-bottom) + 12px);
+  gap: 12px;
+  overflow: hidden;
+}
+
+.screen--message {
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 8px;
+}
+
+.message {
+  margin: 0;
+  font-size: 15px;
+}
+
+.message--dim {
+  color: var(--dim);
+}
+
+/* ---------- top bar ---------- */
+
+.topbar {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 10px;
+  flex: none;
+}
+
+.balance {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #d8a13a, #b8801f);
+  color: #fff;
+  font-weight: 600;
+  font-size: 15px;
+}
+
+.star {
+  width: 16px;
+  height: 16px;
+  color: #ffc93c;
+  flex: none;
+}
+
+/* ---------- board ---------- */
+
+.board {
+  position: relative;
+  /* A fixed share, not flex-grow: sharing 1 1 auto with the players list let
+     the list win and squashed the board onto its min-height. */
+  flex: 0 0 40dvh;
+  min-height: 220px;
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.crash-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* ---------- history ---------- */
+
+.history {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  flex: none;
+  padding-bottom: 2px;
+}
+
+.history::-webkit-scrollbar {
+  display: none;
+}
+
+.chip {
+  flex: none;
+  padding: 8px 18px;
+  border-radius: 12px;
+  background: var(--card);
+  color: var(--text);
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+}
+
+.chip--high {
+  color: var(--green);
+}
+
+.chip--live {
+  background: linear-gradient(180deg, var(--blue-a), var(--blue-b));
+  font-weight: 600;
+}
+
+.chip--crashed {
+  background: var(--red);
+  font-weight: 600;
+}
+
+/* ---------- bet panel ---------- */
+
+.bet-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: none;
+}
+
+.countdown {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--line);
+  overflow: hidden;
+}
+
+.countdown-fill {
+  display: block;
+  height: 100%;
+  background: var(--green);
+  /* Steps in with the 100ms poll rather than easing, so it cannot show more
+     time than is actually left. */
+  transition: width 100ms linear;
+}
+
+.stake-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px;
+  border-radius: var(--radius);
+  background: var(--card);
+}
+
+.stake-step {
+  width: 40px;
+  height: 40px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--card-soft);
+  color: var(--text);
+  font-size: 22px;
+  line-height: 1;
+}
+
+.stake-step:disabled {
+  opacity: 0.35;
+}
+
+.stake-value {
+  font-size: 20px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.quick-row {
+  display: flex;
+  gap: 8px;
+}
+
+.quick {
+  flex: 1;
+  padding: 9px 0;
+  border: 0;
+  border-radius: 12px;
+  background: var(--card);
+  color: var(--dim);
+  font-size: 14px;
+  font-family: inherit;
+}
+
+.quick--on {
+  background: var(--card-soft);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.quick:disabled {
+  opacity: 0.4;
+}
+
+.action {
+  width: 100%;
+  padding: 20px 0;
+  border: 0;
+  border-radius: var(--radius);
+  color: #fff;
+  font-family: inherit;
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+}
+
+.action--bet {
+  background: linear-gradient(180deg, var(--blue-a), var(--blue-b));
+}
+
+.action--cash {
+  background: linear-gradient(180deg, #3ddc84, #1faa5c);
+}
+
+.action--idle {
+  background: var(--card);
+  color: var(--dim);
+}
+
+.notice {
+  margin: 0;
+  text-align: center;
+  font-size: 13px;
+  color: var(--red);
+  flex: none;
+}
+
+/* ---------- players ---------- */
+
+.players {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1 1 auto;
+  border-radius: var(--radius);
+  background: var(--card);
+  overflow: hidden;
+}
+
+.players-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-y: auto;
+  flex: 1 1 auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.player-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  /* Inert on purpose: tapping a player does nothing in this build. */
+  pointer-events: none;
+  user-select: none;
+}
+
+.player-row:last-child {
+  border-bottom: 0;
+}
+
+.player-row--mine {
+  background: rgba(75, 131, 255, 0.12);
+}
+
+.player-avatar {
+  width: 39px;
+  height: 39px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 16px;
+  font-weight: 600;
+  color: #fff;
+  flex: none;
+}
+
+.player-identity {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.player-name {
+  font-size: 15px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.player-stake {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.player-payout {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 17px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}
+
+.player-payout--won {
+  color: var(--green);
+}
+
+.player-at {
+  font-style: normal;
+  font-size: 12px;
+  color: var(--dim);
+}
+
+.players-total {
+  padding: 10px 14px calc(10px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--line);
+  text-align: center;
+  font-size: 13px;
+  color: var(--dim);
+  flex: none;
+}

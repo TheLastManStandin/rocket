@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import lottie, { type AnimationItem } from "lottie-web";
 
 import { curveAt, format, secondsToReach } from "../lib/multiplier";
 import type { Phase } from "../lib/types";
@@ -27,20 +28,28 @@ const GREEN = "0, 255, 0";
 /** The burst colour on the original board is a hot pink, not a dark red. */
 const CRASH = "255, 45, 85";
 
-/**
- * Reserves the square the rocket artwork will occupy. The original plays an
- * animated sprite riding the leading edge; this holds the exact slot as a plain
- * black square so the artwork can drop straight in.
- */
-const ROCKET_SLOT = 88;
+/** Footprint reserved for the carrot-and-bunny clip riding the curve's tip. */
+const CARROT_SIZE = 96;
+/** The burst clip needs more room than the carrot: it expands well past it. */
+const BURST_SIZE = 220;
 
 /**
- * The whole board on one canvas: starfield, perspective grid, the curve, the
- * rocket slot and the number over them. Keeping the number on the canvas means
- * the 60fps animation never touches the React tree.
+ * The crash clip (crash-anim.json) runs a fixed 3s. It's left to play out in
+ * full, and the multiplier only appears once it's done -- the server's
+ * crashed-phase pause is set longer than this so there is time left to show it.
+ */
+const BURST_LEN = 3;
+
+/**
+ * The whole board: starfield, perspective grid and curve on a canvas, with the
+ * carrot-and-bunny and crash clips as Lottie layers on top of it (both pulled
+ * from the reference board's own assets). Keeping the number on the canvas
+ * means the 60fps animation never touches the React tree.
  */
 export function CrashCanvas({ phase, multiplier, phaseEndsAt }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const carrotRef = useRef<HTMLDivElement>(null);
+  const burstRef = useRef<HTMLDivElement>(null);
 
   // The render loop reads the latest values through a ref, so it is set up once
   // and never torn down as props change.
@@ -49,13 +58,36 @@ export function CrashCanvas({ phase, multiplier, phaseEndsAt }: Props) {
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    const carrotEl = carrotRef.current;
+    const burstEl = burstRef.current;
+    if (!canvas || !carrotEl || !burstEl) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
     let stars: Star[] = [];
     let width = 0;
     let height = 0;
+    let carrotSize = CARROT_SIZE;
+
+    // Where the carrot last sat. Flying is the only phase that updates it.
+    const tip = { x: 0, y: 0 };
+    let prevPhase: Phase | null = null;
+    let burstStart: number | null = null;
+
+    const carrotAnim: AnimationItem = lottie.loadAnimation({
+      container: carrotEl,
+      renderer: "svg",
+      loop: true,
+      autoplay: false,
+      path: "/lottie/bunny-anim.json",
+    });
+    const burstAnim: AnimationItem = lottie.loadAnimation({
+      container: burstEl,
+      renderer: "svg",
+      loop: false,
+      autoplay: false,
+      path: "/lottie/crash-anim.json",
+    });
 
     const resize = () => {
       const dpr = window.devicePixelRatio || 1;
@@ -65,6 +97,19 @@ export function CrashCanvas({ phase, multiplier, phaseEndsAt }: Props) {
       canvas.height = Math.round(height * dpr);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       stars = makeStars(width, height);
+      tip.x = width / 2;
+      tip.y = height * 0.5;
+
+      carrotSize = Math.min(CARROT_SIZE, width * 0.26);
+      const burstSize = Math.min(BURST_SIZE, width * 0.6);
+      carrotEl.style.width = `${carrotSize}px`;
+      carrotEl.style.height = `${carrotSize}px`;
+      burstEl.style.width = `${burstSize}px`;
+      burstEl.style.height = `${burstSize}px`;
+      // Dead centre of the board, not the curve's tip -- the burst reads as
+      // the round's outcome, not as a continuation of where it happened.
+      burstEl.style.left = `${width / 2}px`;
+      burstEl.style.top = `${height / 2}px`;
     };
 
     resize();
@@ -75,7 +120,28 @@ export function CrashCanvas({ phase, multiplier, phaseEndsAt }: Props) {
     const start = performance.now();
 
     const render = () => {
-      draw(ctx, width, height, latest.current, stars, (performance.now() - start) / 1000);
+      const elapsed = (performance.now() - start) / 1000;
+      const board = latest.current;
+
+      if (board.phase === "flying" && prevPhase !== "flying") carrotAnim.play();
+      if (board.phase !== "flying" && prevPhase === "flying") carrotAnim.stop();
+      carrotEl.style.visibility = board.phase === "flying" ? "visible" : "hidden";
+      if (board.phase === "flying") {
+        carrotEl.style.left = `${tip.x}px`;
+        carrotEl.style.top = `${tip.y}px`;
+      }
+
+      if (board.phase === "crashed" && prevPhase !== "crashed") {
+        burstStart = elapsed;
+        burstAnim.goToAndPlay(0, true);
+      }
+      if (board.phase !== "crashed") burstStart = null;
+      prevPhase = board.phase;
+
+      const burstAge = burstStart !== null ? elapsed - burstStart : null;
+      burstEl.style.visibility = burstAge !== null && burstAge < BURST_LEN ? "visible" : "hidden";
+
+      draw(ctx, width, height, board, stars, elapsed, tip, carrotSize, burstAge);
       frame = requestAnimationFrame(render);
     };
     frame = requestAnimationFrame(render);
@@ -83,10 +149,18 @@ export function CrashCanvas({ phase, multiplier, phaseEndsAt }: Props) {
     return () => {
       cancelAnimationFrame(frame);
       observer.disconnect();
+      carrotAnim.destroy();
+      burstAnim.destroy();
     };
   }, []);
 
-  return <canvas ref={canvasRef} className="crash-canvas" />;
+  return (
+    <>
+      <canvas ref={canvasRef} className="crash-canvas" />
+      <div ref={carrotRef} className="crash-lottie" />
+      <div ref={burstRef} className="crash-lottie" />
+    </>
+  );
 }
 
 type Board = { phase: Phase; multiplier: number; phaseEndsAt: number | null };
@@ -109,6 +183,9 @@ function draw(
   board: Board,
   stars: Star[],
   elapsed: number,
+  tip: { x: number; y: number },
+  carrotSize: number,
+  burstAge: number | null,
 ) {
   ctx.clearRect(0, 0, width, height);
   ctx.fillStyle = "#000000";
@@ -120,14 +197,18 @@ function draw(
   // only the number standing, so the grid and the curve go with it.
   if (board.phase === "flying") {
     drawGrid(ctx, width, height, elapsed);
-    drawCurve(ctx, width, height, board.multiplier);
+    drawCurve(ctx, width, height, board.multiplier, tip, carrotSize);
   }
 
   if (board.phase === "betting") {
     drawCountdown(ctx, width, height, board.phaseEndsAt);
-  } else {
-    drawMultiplier(ctx, width, height, board);
+    return;
   }
+
+  // The burst clip gets the crashed phase to itself; the coefficient only
+  // takes over once it has fully played out.
+  const holdingForBurst = board.phase === "crashed" && burstAge !== null && burstAge < BURST_LEN;
+  if (!holdingForBurst) drawMultiplier(ctx, width, height, board, 1);
 }
 
 function drawStars(
@@ -191,6 +272,8 @@ function drawCurve(
   width: number,
   height: number,
   multiplier: number,
+  tip: { x: number; y: number },
+  carrotSize: number,
 ) {
   const padBottom = height * 0.1;
   const plotW = width * 0.92;
@@ -239,39 +322,9 @@ function drawCurve(
   ctx.stroke(path);
   ctx.shadowBlur = 0;
 
-  drawRocketSlot(ctx, tipX, tipY, width, height);
-}
-
-/**
- * The square the rocket artwork will occupy, sitting on the leading edge.
- *
- * Deliberately axis-aligned: tilting it along the tangent is what the finished
- * sprite wants, but an opaque black box rotated into the grid reads as a
- * rendering fault rather than a reserved slot. Drop the artwork in first, then
- * tilt it.
- */
-function drawRocketSlot(
-  ctx: CanvasRenderingContext2D,
-  tipX: number,
-  tipY: number,
-  width: number,
-  height: number,
-) {
-  const size = Math.min(ROCKET_SLOT, width * 0.24);
-  // Sits on the tip, leaning ahead of it the way the original sprite does, and
-  // kept inside the board so it never half-hangs off an edge.
-  const x = clamp(tipX - size * 0.42, 0, width - size);
-  const y = clamp(tipY - size * 0.5, 0, height - size);
-
-  ctx.save();
-  ctx.fillStyle = "#000000";
-  ctx.strokeStyle = "rgba(255, 255, 255, 0.18)";
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.rect(x, y, size, size);
-  ctx.fill();
-  ctx.stroke();
-  ctx.restore();
+  // Kept inside the board so the clip never half-hangs off an edge.
+  tip.x = clamp(tipX, carrotSize * 0.5, width - carrotSize * 0.5);
+  tip.y = clamp(tipY, carrotSize * 0.5, height - carrotSize * 0.5);
 }
 
 function clamp(value: number, low: number, high: number): number {
@@ -313,11 +366,15 @@ function drawMultiplier(
   width: number,
   height: number,
   board: Board,
+  alpha: number,
 ) {
+  if (alpha <= 0) return;
+
   const text = `x${format(board.multiplier)}`;
   const tone = board.phase === "crashed" ? CRASH : GREEN;
 
   ctx.save();
+  ctx.globalAlpha = alpha;
   // Fit by measuring rather than trusting a fixed size: without SF Pro the
   // stack falls back to a noticeably wider face, and a hard-coded 96px then
   // stretches the number right across the board.

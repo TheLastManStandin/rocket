@@ -56,10 +56,12 @@ type Config struct {
 
 func (c Config) withDefaults() Config {
 	if c.BettingWindow <= 0 {
-		c.BettingWindow = 7 * time.Second
+		c.BettingWindow = 4 * time.Second
 	}
 	if c.CrashedPause <= 0 {
-		c.CrashedPause = 3 * time.Second
+		// The crash clip on the client runs a fixed 3s; the extra 1.5s here is
+		// what's left over for the coefficient to stand on its own once it does.
+		c.CrashedPause = 4500 * time.Millisecond
 	}
 	if c.MaxCrash <= 0 {
 		c.MaxCrash = 1000

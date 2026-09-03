@@ -129,6 +129,18 @@ body {
   height: 100%;
 }
 
+/* Position and size are driven per-frame from CrashCanvas.tsx; this just
+   keeps the clips out of the document flow and out of the way of taps. */
+.crash-lottie {
+  position: absolute;
+  top: 0;
+  left: 0;
+  /* left/top are set from CrashCanvas.tsx as a point to centre on. */
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  visibility: hidden;
+}
+
 /* ---------- history ---------- */
 
 .history {

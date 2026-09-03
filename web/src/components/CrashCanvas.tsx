@@ -21,7 +21,7 @@ interface Star {
 }
 
 /** Where the leading edge of the curve sits across the plot. */
-const TIP_AT = 0.78;
+const TIP_AT = 0.82;
 
 const GOLD = "240, 160, 32";
 const GREEN = "0, 255, 0";
@@ -252,7 +252,7 @@ function drawGrid(ctx: CanvasRenderingContext2D, width: number, height: number, 
   }
 
   // Rows crawl forward so the grid reads as motion rather than wallpaper.
-  const scroll = (elapsed * 0.25) % 1;
+  const scroll = (elapsed * 0.7) % 1;
   for (let row = 0; row < 14; row++) {
     const t = (row + scroll) / 14;
     const y = vanishY + (horizon - vanishY) * t * t;
@@ -372,19 +372,28 @@ function drawMultiplier(
 
   const text = `x${format(board.multiplier)}`;
   const tone = board.phase === "crashed" ? CRASH : GREEN;
+  // While it's flying the carrot owns the right side of the board, so the
+  // number sits small in the clear space on the left rather than spanning the
+  // centre on top of it. Once crashed there's nothing to share the board
+  // with, so it gets the big centred reveal back.
+  const compact = board.phase === "flying";
 
   ctx.save();
   ctx.globalAlpha = alpha;
   // Fit by measuring rather than trusting a fixed size: without SF Pro the
   // stack falls back to a noticeably wider face, and a hard-coded 96px then
   // stretches the number right across the board.
-  ctx.font = fontOf(fitFont(ctx, text, width * 0.52, Math.min(width * 0.24, height * 0.3)));
-  ctx.textAlign = "center";
+  const maxWidth = compact ? width * 0.4 : width * 0.52;
+  const maxSize = compact
+    ? Math.min(width * 0.15, height * 0.18)
+    : Math.min(width * 0.24, height * 0.3);
+  ctx.font = fontOf(fitFont(ctx, text, maxWidth, maxSize));
+  ctx.textAlign = compact ? "left" : "center";
   ctx.textBaseline = "middle";
   ctx.fillStyle = `rgb(${tone})`;
   ctx.shadowColor = `rgb(${tone})`;
   ctx.shadowBlur = board.phase === "crashed" ? 34 : 20;
-  ctx.fillText(text, width / 2, height * 0.38);
+  ctx.fillText(text, compact ? width * 0.07 : width / 2, height * 0.38);
   ctx.restore();
 }
 

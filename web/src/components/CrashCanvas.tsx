@@ -34,11 +34,15 @@ const CARROT_SIZE = 96;
 const BURST_SIZE = 220;
 
 /**
- * The crash clip (crash-anim.json) runs a fixed 3s. It's left to play out in
- * full, and the multiplier only appears once it's done -- the server's
- * crashed-phase pause is set longer than this so there is time left to show it.
+ * crash-anim.json runs 180 frames at 60fps (3s) top to bottom, but its first
+ * half is wind-up -- only the back half, the actual detonation, plays. Adjust
+ * the frame range here to taste; BURST_LEN (the number's cue to come back on
+ * screen) follows it automatically.
  */
-const BURST_LEN = 3;
+const BURST_FRAME_START = 90;
+const BURST_FRAME_END = 180;
+const BURST_FPS = 60;
+const BURST_LEN = (BURST_FRAME_END - BURST_FRAME_START) / BURST_FPS;
 
 /**
  * How long the number takes to pop in once it's allowed back on screen --
@@ -137,7 +141,7 @@ export function CrashCanvas({ phase, multiplier, phaseEndsAt }: Props) {
 
       if (board.phase === "crashed" && prevPhase !== "crashed") {
         burstStart = elapsed;
-        burstAnim.goToAndPlay(0, true);
+        burstAnim.playSegments([BURST_FRAME_START, BURST_FRAME_END], true);
       }
       if (board.phase !== "crashed") burstStart = null;
       prevPhase = board.phase;

@@ -1,4 +1,4 @@
-.PHONY: db dev build test tidy front
+.PHONY: db dev build test tidy front telegram
 
 db:
 	docker compose up -d
@@ -14,6 +14,9 @@ front:
 
 dev:
 	go run ./cmd/server
+
+telegram:
+	./scripts/telegram.sh
 
 tidy:
 	go mod tidy && gofmt -w .

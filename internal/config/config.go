@@ -38,7 +38,7 @@ func Load() (*Config, error) {
 	}
 
 	var err error
-	if c.StartBalance, err = envInt("START_BALANCE", 1000); err != nil {
+	if c.StartBalance, err = envInt("START_BALANCE", 0); err != nil {
 		return nil, err
 	}
 	if c.MinBet, err = envInt("MIN_BET", 10); err != nil {

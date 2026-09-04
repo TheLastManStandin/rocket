@@ -131,14 +131,19 @@ func (m *Manager) Shutdown() {
 	m.mu.Lock()
 	entries := make([]*entry, 0, len(m.sessions))
 	for _, e := range m.sessions {
+		// reaper is guarded by mu, so it is stopped in here rather than
+		// alongside cancel below. Stop never waits on a callback already
+		// running, so holding the lock it wants cannot deadlock.
+		if e.reaper != nil {
+			e.reaper.Stop()
+		}
 		entries = append(entries, e)
 	}
 	m.mu.Unlock()
 
+	// Cancelling stays outside the lock: tearing a session down ends in
+	// forget, which wants the same mutex.
 	for _, e := range entries {
-		if e.reaper != nil {
-			e.reaper.Stop()
-		}
 		e.cancel()
 	}
 }

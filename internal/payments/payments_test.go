@@ -101,7 +101,7 @@ func paidMessage(tgID, stars int64, payload, charge string) *telegram.Message {
 func TestInvoiceRefusesAnAmountThatIsNotOnOffer(t *testing.T) {
 	s := newService(&fakeAPI{}, fakeStore{}, newWallet(), &fakeNotifier{})
 
-	for _, stars := range []int64{0, -100, 1, 999, 1_000_000} {
+	for _, stars := range []int64{0, -100, 50, 999, 1_000_000} {
 		if _, err := s.InvoiceLink(context.Background(), 7, stars); !errors.Is(err, ErrUnknownPackage) {
 			t.Errorf("%d stars: want ErrUnknownPackage, got %v", stars, err)
 		}

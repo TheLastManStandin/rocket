@@ -6,6 +6,12 @@
       "runtimeExecutable": "go",
       "runtimeArgs": ["run", "./cmd/server"],
       "port": 8090
+    },
+    {
+      "name": "racketka-dev",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "DEV_MODE=true go run ./cmd/server"],
+      "port": 8090
     }
   ]
 }

@@ -104,11 +104,139 @@ body {
   font-size: 15px;
 }
 
+.balance {
+  border: 0;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.balance:active {
+  filter: brightness(0.92);
+}
+
+/* Says the chip does something, without a second control competing with it. */
+.balance-plus {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  margin-left: 2px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.25);
+  font-size: 14px;
+  line-height: 1;
+}
+
 .star {
   width: 16px;
   height: 16px;
   color: #ffc93c;
   flex: none;
+}
+
+/* ---------- top-up sheet ---------- */
+
+.sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+}
+
+.sheet {
+  width: 100%;
+  max-width: 430px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 16px calc(20px + env(safe-area-inset-bottom));
+  border-radius: 20px 20px 0 0;
+  background: var(--card);
+  animation: sheet-rise 220ms ease-out;
+}
+
+@keyframes sheet-rise {
+  from {
+    transform: translateY(100%);
+  }
+}
+
+.sheet-grip {
+  width: 36px;
+  height: 4px;
+  margin: 0 auto 4px;
+  border-radius: 999px;
+  background: var(--line);
+}
+
+.sheet-title {
+  margin: 0;
+  text-align: center;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.sheet-hint {
+  margin: 0;
+  text-align: center;
+  font-size: 13px;
+  color: var(--dim);
+}
+
+.packs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.pack {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 14px 0;
+  border: 0;
+  border-radius: 12px;
+  background: var(--card-soft);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 16px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.pack:disabled {
+  opacity: 0.45;
+}
+
+.sheet-note {
+  margin: 0;
+  text-align: center;
+  font-size: 13px;
+  color: var(--dim);
+}
+
+.sheet-note--good {
+  color: var(--green);
+}
+
+.sheet-note--bad {
+  color: var(--red);
+}
+
+.sheet-close {
+  margin-top: 2px;
+  padding: 14px 0;
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--card-soft);
+  color: var(--dim);
+  font-family: inherit;
+  font-size: 16px;
 }
 
 /* ---------- board ---------- */

@@ -9,10 +9,12 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/cahisa/racketka/internal/auth"
 	"github.com/cahisa/racketka/internal/config"
+	"github.com/cahisa/racketka/internal/payments"
 	"github.com/cahisa/racketka/internal/session"
 	"github.com/cahisa/racketka/internal/storage"
 	"github.com/cahisa/racketka/internal/telegram"
@@ -27,19 +29,23 @@ const devTgID int64 = 1
 const maxAuthBody = 8 << 10
 
 type Deps struct {
-	Config  *config.Config
-	Store   *storage.Store
-	Wallet  wallet.Wallet
-	Manager *session.Manager
-	Issuer  *auth.Issuer
-	Logger  *slog.Logger
-	WebRoot string
+	Config *config.Config
+	Store  *storage.Store
+	Wallet wallet.Wallet
+	// Payments is nil when there is no bot token to sell Stars with, which is
+	// the ordinary state of a dev run in a plain browser.
+	Payments *payments.Service
+	Manager  *session.Manager
+	Issuer   *auth.Issuer
+	Logger   *slog.Logger
+	WebRoot  string
 }
 
 func NewRouter(d Deps) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("POST /api/auth/telegram", d.handleTelegramAuth)
+	mux.HandleFunc("POST /api/stars/invoice", d.handleStarsInvoice)
 	mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "online": d.Manager.Online()})
 	})
@@ -70,7 +76,10 @@ type authResponse struct {
 		MinBet int64 `json:"minBet"`
 		MaxBet int64 `json:"maxBet"`
 	} `json:"limits"`
-	User struct {
+	// The amounts the top-up sheet may offer. Sent with the sign-in rather
+	// than fetched separately so the client cannot invent its own.
+	StarPackages []int64 `json:"starPackages"`
+	User         struct {
 		ID        int64  `json:"id"`
 		Username  string `json:"username"`
 		FirstName string `json:"firstName"`
@@ -113,11 +122,66 @@ func (d Deps) handleTelegramAuth(w http.ResponseWriter, r *http.Request) {
 	resp.Balance = user.Balance
 	resp.Limits.MinBet = d.Config.MinBet
 	resp.Limits.MaxBet = d.Config.MaxBet
+	if d.Payments != nil {
+		resp.StarPackages = payments.Packages
+	}
 	resp.User.ID = user.TgID
 	resp.User.Username = user.Username
 	resp.User.FirstName = user.FirstName
 	resp.User.PhotoURL = user.PhotoURL
 	writeJSON(w, http.StatusOK, resp)
+}
+
+type invoiceRequest struct {
+	Stars int64 `json:"stars"`
+}
+
+// handleStarsInvoice prices one of the fixed packages for the signed-in player.
+// The link it returns is opened with WebApp.openInvoice; everything after that
+// happens between the player and Telegram, and comes back as an update.
+func (d Deps) handleStarsInvoice(w http.ResponseWriter, r *http.Request) {
+	if d.Payments == nil {
+		writeJSON(w, http.StatusServiceUnavailable,
+			map[string]string{"error": "stars are not configured on this server"})
+		return
+	}
+
+	claims, err := d.Issuer.Parse(bearer(r), time.Now())
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxAuthBody)
+	var req invoiceRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "malformed request"})
+		return
+	}
+
+	link, err := d.Payments.InvoiceLink(r.Context(), claims.UserID, req.Stars)
+	switch {
+	case errors.Is(err, payments.ErrUnknownPackage):
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "no such package"})
+		return
+	case err != nil:
+		d.Logger.Error("could not create a Stars invoice",
+			"user", claims.UserID, "stars", req.Stars, "error", err)
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "telegram refused the invoice"})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"link": link})
+}
+
+// bearer pulls the session token out of the Authorization header.
+func bearer(r *http.Request) string {
+	const prefix = "Bearer "
+	header := r.Header.Get("Authorization")
+	if len(header) > len(prefix) && strings.EqualFold(header[:len(prefix)], prefix) {
+		return header[len(prefix):]
+	}
+	return ""
 }
 
 // resolveProfile turns initData into a player, or refuses. The signature is the

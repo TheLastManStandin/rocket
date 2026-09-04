@@ -47,6 +47,64 @@ func (w *Postgres) Credit(ctx context.Context, userID, amount int64, reason, ref
 	return w.move(ctx, q, userID, amount, amount, reason, ref, pgx.ErrNoRows)
 }
 
+// TopUp books a Stars payment, once. chargeID is Telegram's id for the
+// payment; it lands in the ledger as the ref, where a unique index refuses the
+// second copy of a redelivered update. applied reports whether this call was
+// the one that moved the balance.
+//
+// Unlike Credit this writes the ledger row first: the insert is what claims
+// the charge, so a duplicate loses the race there rather than after the
+// balance has already grown.
+func (w *Postgres) TopUp(
+	ctx context.Context,
+	userID, stars int64,
+	chargeID string,
+) (balance int64, applied bool, err error) {
+	if stars <= 0 {
+		return 0, false, fmt.Errorf("wallet: a top-up must be positive, got %d", stars)
+	}
+	if chargeID == "" {
+		return 0, false, errors.New("wallet: a top-up needs the charge id it is keyed on")
+	}
+
+	tx, err := w.pool.Begin(ctx)
+	if err != nil {
+		return 0, false, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // no-op once committed
+
+	const claim = `
+		INSERT INTO ledger (user_id, delta, reason, ref_id)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT DO NOTHING`
+	tag, err := tx.Exec(ctx, claim, userID, stars, ReasonTopUp, chargeID)
+	if err != nil {
+		return 0, false, fmt.Errorf("wallet: recording top-up %s: %w", chargeID, err)
+	}
+
+	if tag.RowsAffected() == 0 {
+		// Already booked. Report the balance as it stands so the caller can
+		// still answer the player with something true.
+		balance, err = w.Balance(ctx, userID)
+		if err != nil {
+			return 0, false, err
+		}
+		return balance, false, nil
+	}
+
+	const grow = `
+		UPDATE users SET balance = balance + $2, updated_at = now()
+		WHERE id = $1
+		RETURNING balance`
+	if err := tx.QueryRow(ctx, grow, userID, stars).Scan(&balance); err != nil {
+		return 0, false, fmt.Errorf("wallet: crediting top-up %s: %w", chargeID, err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, false, err
+	}
+	return balance, true, nil
+}
+
 func (w *Postgres) move(
 	ctx context.Context,
 	q string,

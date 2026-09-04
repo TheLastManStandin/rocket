@@ -189,3 +189,95 @@ func TestDebitRefusesToOverdraw(t *testing.T) {
 	}
 	requireReconciled(t, store, user.ID)
 }
+
+// A Stars top-up has to land exactly once. Telegram redelivers updates it has
+// not seen acknowledged, so the second copy of a payment must be a no-op
+// rather than a second credit.
+func TestTopUpCreditsOnceForACharge(t *testing.T) {
+	store := testStore(t)
+	purse := wallet.NewPostgres(store.Pool())
+	user := newPlayer(t, store, 1000)
+	ctx := context.Background()
+
+	balance, applied, err := purse.TopUp(ctx, user.ID, 250, "charge-once")
+	if err != nil {
+		t.Fatalf("first top-up: %v", err)
+	}
+	if !applied {
+		t.Fatal("the first delivery of a charge has to apply")
+	}
+	if balance != 1250 {
+		t.Errorf("balance = %d, want 1250", balance)
+	}
+
+	balance, applied, err = purse.TopUp(ctx, user.ID, 250, "charge-once")
+	if err != nil {
+		t.Fatalf("redelivered top-up: %v", err)
+	}
+	if applied {
+		t.Error("a redelivered charge must not apply a second time")
+	}
+	if balance != 1250 {
+		t.Errorf("balance after the repeat = %d, want it unmoved at 1250", balance)
+	}
+
+	requireReconciled(t, store, user.ID)
+}
+
+// Two charges are two top-ups; only the id is what makes one a duplicate.
+func TestTopUpTakesEveryDistinctCharge(t *testing.T) {
+	store := testStore(t)
+	purse := wallet.NewPostgres(store.Pool())
+	user := newPlayer(t, store, 0)
+	ctx := context.Background()
+
+	for _, id := range []string{"charge-a", "charge-b"} {
+		if _, applied, err := purse.TopUp(ctx, user.ID, 100, id); err != nil || !applied {
+			t.Fatalf("top-up %s: applied=%v err=%v", id, applied, err)
+		}
+	}
+
+	if got := currentBalance(t, store, user.ID); got != 200 {
+		t.Errorf("balance = %d, want 200", got)
+	}
+	requireReconciled(t, store, user.ID)
+}
+
+func TestTopUpRefusesNonsense(t *testing.T) {
+	store := testStore(t)
+	purse := wallet.NewPostgres(store.Pool())
+	user := newPlayer(t, store, 0)
+	ctx := context.Background()
+
+	if _, _, err := purse.TopUp(ctx, user.ID, 0, "charge-zero"); err == nil {
+		t.Error("a zero top-up should be refused")
+	}
+	if _, _, err := purse.TopUp(ctx, user.ID, -100, "charge-negative"); err == nil {
+		t.Error("a negative top-up should be refused")
+	}
+	if _, _, err := purse.TopUp(ctx, user.ID, 100, ""); err == nil {
+		t.Error("a top-up with no charge id has nothing to be idempotent on")
+	}
+
+	if got := currentBalance(t, store, user.ID); got != 0 {
+		t.Errorf("balance = %d, want it untouched at 0", got)
+	}
+}
+
+// Payment updates name the payer by Telegram id, so that lookup has to work.
+func TestUserByTgID(t *testing.T) {
+	store := testStore(t)
+	user := newPlayer(t, store, 500)
+
+	found, err := store.UserByTgID(context.Background(), user.TgID)
+	if err != nil {
+		t.Fatalf("UserByTgID: %v", err)
+	}
+	if found.ID != user.ID {
+		t.Errorf("found user %d, want %d", found.ID, user.ID)
+	}
+
+	if _, err := store.UserByTgID(context.Background(), 0); err == nil {
+		t.Error("an unknown telegram id should not resolve to a player")
+	}
+}

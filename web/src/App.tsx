@@ -4,6 +4,7 @@ import { BetPanel } from "./components/BetPanel";
 import { CrashCanvas } from "./components/CrashCanvas";
 import { HistoryStrip } from "./components/HistoryStrip";
 import { PlayersList } from "./components/PlayersList";
+import { TopUpSheet } from "./components/TopUpSheet";
 import { authenticate } from "./lib/api";
 import { haptic, prepare } from "./lib/telegram";
 import type { AuthResponse } from "./lib/types";
@@ -12,6 +13,7 @@ import { useCrashGame } from "./lib/useCrashGame";
 export function App() {
   const [account, setAccount] = useState<AuthResponse | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
+  const [toppingUp, setToppingUp] = useState(false);
 
   useEffect(() => {
     prepare();
@@ -48,7 +50,13 @@ export function App() {
   return (
     <main className="screen">
       <header className="topbar">
-        <span className="balance">
+        <button
+          className="balance"
+          onClick={() => {
+            haptic("tap");
+            setToppingUp(true);
+          }}
+        >
           <svg viewBox="0 0 24 24" className="star" aria-hidden="true">
             <path
               fill="currentColor"
@@ -56,7 +64,8 @@ export function App() {
             />
           </svg>
           {balance}
-        </span>
+          <span className="balance-plus">+</span>
+        </button>
       </header>
 
       <div className="board">
@@ -90,6 +99,14 @@ export function App() {
         multiplier={state.multiplier}
         playerName={account.user.firstName || account.user.username || "Вы"}
       />
+
+      {toppingUp && (
+        <TopUpSheet
+          token={account.token}
+          packages={account.starPackages ?? []}
+          onClose={() => setToppingUp(false)}
+        />
+      )}
     </main>
   );
 }

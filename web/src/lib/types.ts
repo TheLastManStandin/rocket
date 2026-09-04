@@ -54,6 +54,8 @@ export interface AuthResponse {
     minBet: number;
     maxBet: number;
   };
+  /** Amounts the top-up sheet may offer. Empty when the server sells no Stars. */
+  starPackages?: number[];
   user: {
     id: number;
     username: string;

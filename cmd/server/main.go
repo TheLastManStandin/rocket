@@ -18,8 +18,10 @@ import (
 	"github.com/cahisa/racketka/internal/config"
 	"github.com/cahisa/racketka/internal/game"
 	"github.com/cahisa/racketka/internal/httpapi"
+	"github.com/cahisa/racketka/internal/payments"
 	"github.com/cahisa/racketka/internal/session"
 	"github.com/cahisa/racketka/internal/storage"
+	"github.com/cahisa/racketka/internal/telegram"
 	"github.com/cahisa/racketka/internal/wallet"
 )
 
@@ -67,16 +69,28 @@ func run(log *slog.Logger) error {
 	}, purse, store, log)
 	defer manager.Shutdown()
 
+	// Stars need a bot to sell them. Without a token the game still runs, it
+	// just cannot be topped up -- which is exactly the dev-mode case.
+	var payer *payments.Service
+	if cfg.BotToken != "" {
+		payer = payments.New(telegram.NewBot(cfg.BotToken), store, purse, manager, log)
+		go payer.Watch(ctx)
+		log.Info("watching for Stars payments")
+	} else {
+		log.Warn("BOT_TOKEN is empty: top-ups are switched off")
+	}
+
 	srv := &http.Server{
 		Addr: cfg.Addr,
 		Handler: httpapi.NewRouter(httpapi.Deps{
-			Config:  cfg,
-			Store:   store,
-			Wallet:  purse,
-			Manager: manager,
-			Issuer:  auth.NewIssuer(cfg.JWTSecret, cfg.JWTTTL),
-			Logger:  log,
-			WebRoot: "web/dist",
+			Config:   cfg,
+			Store:    store,
+			Wallet:   purse,
+			Payments: payer,
+			Manager:  manager,
+			Issuer:   auth.NewIssuer(cfg.JWTSecret, cfg.JWTTTL),
+			Logger:   log,
+			WebRoot:  "web/dist",
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		// No WriteTimeout on purpose: it would cut every websocket at the

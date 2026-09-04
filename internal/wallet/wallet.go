@@ -18,6 +18,7 @@ const (
 	ReasonPayout  = "payout"
 	ReasonRefund  = "refund"
 	ReasonWelcome = "welcome"
+	ReasonTopUp   = "topup"
 )
 
 type Wallet interface {

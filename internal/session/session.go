@@ -257,6 +257,13 @@ func (s *Session) Subscribe(ctx context.Context) (<-chan game.Event, func(), err
 	return ch, cancel, nil
 }
 
+// PushBalance reports a balance the round did not cause -- a Stars top-up
+// landing mid-flight, say. It deliberately does not touch the game: the money
+// arrived from outside it, and a round in progress is none of its business.
+func (s *Session) PushBalance(balance int64) {
+	s.broadcast([]game.Event{{Type: game.EventBalance, Balance: balance}})
+}
+
 func (s *Session) broadcast(events []game.Event) {
 	if len(events) == 0 {
 		return

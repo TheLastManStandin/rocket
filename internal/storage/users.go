@@ -68,6 +68,20 @@ func (s *Store) UpsertUser(ctx context.Context, p Profile, startBalance int64) (
 	return &u, nil
 }
 
+// UserByTgID finds a player by their Telegram id. Payment updates identify the
+// payer that way and know nothing of our own ids.
+func (s *Store) UserByTgID(ctx context.Context, tgID int64) (*User, error) {
+	const q = `SELECT id, tg_id, username, first_name, photo_url, balance FROM users WHERE tg_id = $1`
+
+	var u User
+	err := s.pool.QueryRow(ctx, q, tgID).
+		Scan(&u.ID, &u.TgID, &u.Username, &u.FirstName, &u.PhotoURL, &u.Balance)
+	if err != nil {
+		return nil, fmt.Errorf("storage: loading user with telegram id %d: %w", tgID, err)
+	}
+	return &u, nil
+}
+
 func (s *Store) UserByID(ctx context.Context, id int64) (*User, error) {
 	const q = `SELECT id, tg_id, username, first_name, photo_url, balance FROM users WHERE id = $1`
 

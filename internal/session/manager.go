@@ -98,6 +98,19 @@ func (m *Manager) Release(userID int64) {
 	})
 }
 
+// NudgeBalance tells a player who is currently connected that their balance
+// moved outside the game. Nobody being connected is the ordinary case, not an
+// error: the balance is read fresh at sign-in anyway.
+func (m *Manager) NudgeBalance(userID, balance int64) {
+	m.mu.Lock()
+	e, running := m.sessions[userID]
+	m.mu.Unlock()
+
+	if running {
+		e.session.PushBalance(balance)
+	}
+}
+
 func (m *Manager) forget(userID int64, e *entry) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

@@ -186,7 +186,14 @@ function reduce(
       if (e.multiplier) {
         takeoffRef.current = performance.now() - secondsToReach(e.multiplier) * 1000;
       }
-      return s.phase === "flying" ? s : { ...s, phase: "flying" };
+      // The tick also carries the curve itself, and it has to land in state.
+      // The frame loop below is what normally advances the multiplier, and it
+      // is not running while the Mini App is in the background -- an auto
+      // cash-out reading a curve frozen at x1.00 would sit there and let the
+      // round burst. Never step backwards: between ticks the frame loop is
+      // ahead, and rewinding it would stutter the curve.
+      const multiplier = Math.max(s.multiplier, e.multiplier ?? 0);
+      return { ...s, phase: "flying", multiplier };
     }
 
     case EVENT.botJoined:

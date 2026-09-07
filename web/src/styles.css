@@ -3,23 +3,24 @@
  * breakpoints here -- just a column sized to the viewport with Telegram's safe
  * areas kept clear.
  *
- * Type and colour follow the measurements taken off the live board: SF Pro
- * Display where the device has it, a pure-green multiplier with a 20px glow,
- * and a near-black ground.
+ * Every size, colour and radius below was measured off the reference board:
+ * a #2844fb-to-#4b81f5 button, #42FF84 for money taken and #FF3064 for money
+ * lost, translucent white for anything that has to let the starfield through,
+ * and a near-black ground under all of it.
  */
 
 :root {
   --bg: #000000;
-  --card: #17171a;
-  --card-soft: #1f1f23;
-  --line: #2a2a2f;
+  --sheet-field: #1b1a1d;
   --text: #ffffff;
-  --dim: #8e8e93;
-  --green: #35d17a;
-  --blue-a: #4b83ff;
-  --blue-b: #2f5fe0;
-  --gold: #f0a020;
-  --red: #e53935;
+  --dim: rgba(255, 255, 255, 0.6);
+  --blue-a: #2844fb;
+  --blue-b: #4b81f5;
+  --green-a: #00f088;
+  --green-b: #0fa866;
+  --positive: #42ff84;
+  --destructive: #ff3064;
+  --gold: #f4a10d;
   --radius: 16px;
 
   color-scheme: dark;
@@ -60,10 +61,12 @@ body {
   display: flex;
   flex-direction: column;
   width: 100%;
-  max-width: 430px;
+  max-width: 450px;
   height: 100dvh;
-  padding: env(safe-area-inset-top) 12px calc(env(safe-area-inset-bottom) + 12px);
-  gap: 12px;
+  /* Telegram parks its own chrome over the top of the viewport; the reference
+     board keeps a flat 40px clear of it. */
+  padding-top: max(env(safe-area-inset-top, 0px), 40px);
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 12px);
   overflow: hidden;
 }
 
@@ -83,12 +86,59 @@ body {
   color: var(--dim);
 }
 
+/* The artwork behind every <use href="#tg-star">: present, measured at nothing. */
+.star-defs {
+  position: absolute;
+  width: 0;
+  height: 0;
+}
+
+.star {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+
+.star--balance {
+  width: 18px;
+  height: 18px;
+}
+
+.star--stake {
+  width: 16px;
+  height: 16px;
+}
+
+.star--payout {
+  width: 22px;
+  height: 22px;
+}
+
+.star--total {
+  width: 20px;
+  height: 20px;
+  filter: grayscale(1);
+  opacity: 0.5;
+}
+
+.star--quick {
+  width: 16px;
+  height: 16px;
+}
+
+.star--amount {
+  width: 40px;
+  height: 40px;
+}
+
 /* ---------- top bar ---------- */
 
 .topbar {
   display: flex;
   justify-content: flex-end;
-  padding-top: 10px;
+  align-items: center;
+  height: 40px;
+  padding: 10px 16px 0;
   flex: none;
 }
 
@@ -96,16 +146,13 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 7px 14px;
-  border-radius: 999px;
-  background: linear-gradient(180deg, #d8a13a, #b8801f);
-  color: #fff;
-  font-weight: 600;
-  font-size: 15px;
-}
-
-.balance {
+  height: 30px;
+  padding: 0 8px;
   border: 0;
+  border-radius: 20px;
+  background: var(--gold);
+  box-shadow: inset 0 0 10px rgba(255, 255, 255, 0.6);
+  color: var(--text);
   font-family: inherit;
   cursor: pointer;
 }
@@ -114,147 +161,41 @@ body {
   filter: brightness(0.92);
 }
 
-/* Says the chip does something, without a second control competing with it. */
-.balance-plus {
-  display: grid;
-  place-items: center;
-  width: 18px;
-  height: 18px;
-  margin-left: 2px;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.25);
+.balance-value {
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 14px;
-  line-height: 1;
+  font-weight: 500;
 }
 
-.star {
-  width: 16px;
-  height: 16px;
-  color: #ffc93c;
-  flex: none;
-}
+/* ---------- stage ---------- */
 
-/* ---------- top-up sheet ---------- */
-
-.sheet-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 20;
-  display: flex;
-  align-items: flex-end;
-  justify-content: center;
-  background: rgba(0, 0, 0, 0.6);
-}
-
-.sheet {
-  width: 100%;
-  max-width: 430px;
+/* Everything under the top bar shares one positioning context, because the
+   grid and the sparkles are painted across all of it -- they run behind the
+   chips, the button and the table, not just inside the board. */
+.stage {
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 10px 16px calc(20px + env(safe-area-inset-bottom));
-  border-radius: 20px 20px 0 0;
-  background: var(--card);
-  animation: sheet-rise 220ms ease-out;
+  flex: 1 1 auto;
+  min-height: 0;
+  gap: 16px;
+  padding: 12px 16px 0;
 }
 
-@keyframes sheet-rise {
-  from {
-    transform: translateY(100%);
-  }
+.stage-canvas {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
 }
-
-.sheet-grip {
-  width: 36px;
-  height: 4px;
-  margin: 0 auto 4px;
-  border-radius: 999px;
-  background: var(--line);
-}
-
-.sheet-title {
-  margin: 0;
-  text-align: center;
-  font-size: 18px;
-  font-weight: 600;
-}
-
-.sheet-hint {
-  margin: 0;
-  text-align: center;
-  font-size: 13px;
-  color: var(--dim);
-}
-
-.packs {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
-  gap: 8px;
-  margin-top: 4px;
-}
-
-.pack {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 14px 0;
-  border: 0;
-  border-radius: 12px;
-  background: var(--card-soft);
-  color: var(--text);
-  font-family: inherit;
-  font-size: 16px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-
-.pack:disabled {
-  opacity: 0.45;
-}
-
-.sheet-note {
-  margin: 0;
-  text-align: center;
-  font-size: 13px;
-  color: var(--dim);
-}
-
-.sheet-note--good {
-  color: var(--green);
-}
-
-.sheet-note--bad {
-  color: var(--red);
-}
-
-.sheet-close {
-  margin-top: 2px;
-  padding: 14px 0;
-  border: 0;
-  border-radius: var(--radius);
-  background: var(--card-soft);
-  color: var(--dim);
-  font-family: inherit;
-  font-size: 16px;
-}
-
-/* ---------- board ---------- */
 
 .board {
   position: relative;
-  /* A fixed share, not flex-grow: sharing 1 1 auto with the players list let
-     the list win and squashed the board onto its min-height. */
-  flex: 0 0 40dvh;
-  min-height: 220px;
-  border-radius: var(--radius);
-  overflow: hidden;
-}
-
-.crash-canvas {
-  display: block;
-  width: 100%;
-  height: 100%;
+  z-index: 1;
+  flex: none;
+  height: 250px;
 }
 
 /* Position and size are driven per-frame from CrashCanvas.tsx; this just
@@ -287,15 +228,49 @@ body {
   transform: translate(-50%, -50%) scale(1);
 }
 
+.board-bar {
+  position: absolute;
+  left: 50%;
+  bottom: 16px;
+  width: 128px;
+  height: 4px;
+  transform: translateX(-50%);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.15);
+  overflow: hidden;
+  opacity: 0;
+  transition: opacity 200ms ease-out;
+  pointer-events: none;
+}
+
+.board-bar--on {
+  opacity: 1;
+}
+
+.board-bar-fill {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--positive);
+  box-shadow: 0 0 8px rgba(66, 255, 132, 0.6);
+  transition: width 200ms ease-out;
+}
+
+.board-bar-fill--crashed {
+  background: var(--destructive);
+  box-shadow: 0 0 8px rgba(255, 48, 100, 0.6);
+}
+
 /* ---------- history ---------- */
 
 .history {
+  position: relative;
+  z-index: 1;
   display: flex;
   gap: 8px;
   overflow-x: auto;
   scrollbar-width: none;
   flex: none;
-  padding-bottom: 2px;
 }
 
 .history::-webkit-scrollbar {
@@ -303,190 +278,119 @@ body {
 }
 
 .chip {
+  display: flex;
+  align-items: center;
   flex: none;
-  padding: 8px 18px;
-  border-radius: 12px;
-  background: var(--card);
+  height: 28px;
+  padding: 6px 16px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.1);
   color: var(--text);
-  font-size: 15px;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
   font-variant-numeric: tabular-nums;
-}
-
-.chip--high {
-  color: var(--green);
 }
 
 .chip--live {
-  background: linear-gradient(180deg, var(--blue-a), var(--blue-b));
-  font-weight: 600;
+  background: linear-gradient(90deg, var(--blue-a), var(--blue-b));
+  font-weight: 700;
 }
 
-.chip--crashed {
-  background: var(--red);
-  font-weight: 600;
+/* A fixed slot for the live number, so the chip stops resizing on every
+   hundredth and the whole strip stops shuffling sideways under it. */
+.chip-slot {
+  display: inline-block;
+  width: 36px;
 }
 
-/* ---------- bet panel ---------- */
-
-.bet-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  flex: none;
-}
-
-.countdown {
-  height: 4px;
-  border-radius: 999px;
-  background: var(--line);
-  overflow: hidden;
-}
-
-.countdown-fill {
-  display: block;
-  height: 100%;
-  background: var(--green);
-  /* Steps in with the 100ms poll rather than easing, so it cannot show more
-     time than is actually left. */
-  transition: width 100ms linear;
-}
-
-.stake-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 6px 8px;
-  border-radius: var(--radius);
-  background: var(--card);
-}
-
-.stake-step {
-  width: 40px;
-  height: 40px;
-  border: 0;
-  border-radius: 12px;
-  background: var(--card-soft);
-  color: var(--text);
-  font-size: 22px;
-  line-height: 1;
-}
-
-.stake-step:disabled {
-  opacity: 0.35;
-}
-
-.stake-value {
-  font-size: 20px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-
-.quick-row {
-  display: flex;
-  gap: 8px;
-}
-
-.quick {
-  flex: 1;
-  padding: 9px 0;
-  border: 0;
-  border-radius: 12px;
-  background: var(--card);
-  color: var(--dim);
-  font-size: 14px;
-  font-family: inherit;
-}
-
-.quick--on {
-  background: var(--card-soft);
-  color: var(--text);
-  font-weight: 600;
-}
-
-.quick:disabled {
-  opacity: 0.4;
-}
+/* ---------- action ---------- */
 
 .action {
+  position: relative;
+  z-index: 1;
+  flex: none;
   width: 100%;
-  padding: 20px 0;
+  height: 56px;
+  padding: 0 16px;
   border: 0;
   border-radius: var(--radius);
-  color: #fff;
+  background: linear-gradient(90deg, var(--blue-a), var(--blue-b));
+  color: var(--text);
   font-family: inherit;
-  font-size: 19px;
+  font-size: 16px;
   font-weight: 700;
-  letter-spacing: 0.2px;
-}
-
-.action--bet {
-  background: linear-gradient(180deg, var(--blue-a), var(--blue-b));
+  transition: transform 150ms ease-in-out;
 }
 
 .action--cash {
-  background: linear-gradient(180deg, #3ddc84, #1faa5c);
+  background: linear-gradient(90deg, var(--green-a), var(--green-b));
 }
 
-.action--idle {
-  background: var(--card);
-  color: var(--dim);
+.action:active:not(:disabled) {
+  transform: scale(0.95);
 }
 
-.notice {
-  margin: 0;
-  text-align: center;
-  font-size: 13px;
-  color: var(--red);
-  flex: none;
+.action:disabled {
+  opacity: 0.5;
 }
 
 /* ---------- players ---------- */
 
-.players {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
+.table {
+  position: relative;
+  z-index: 1;
   flex: 1 1 auto;
-  border-radius: var(--radius);
-  background: var(--card);
-  overflow: hidden;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
 }
 
-.players-list {
+.table::-webkit-scrollbar {
+  display: none;
+}
+
+/* Translucent, not opaque: the sparkles behind the stage carry on through the
+   card the way they do on the reference board. */
+.players {
   margin: 0;
-  padding: 0;
+  padding: 0 16px;
   list-style: none;
-  overflow-y: auto;
-  flex: 1 1 auto;
-  -webkit-overflow-scrolling: touch;
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.15);
 }
 
 .player-row {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 12px;
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--line);
+  height: 60px;
   /* Inert on purpose: tapping a player does nothing in this build. */
   pointer-events: none;
   user-select: none;
 }
 
-.player-row:last-child {
-  border-bottom: 0;
+.player-row + .player-row {
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
 }
 
-.player-row--mine {
-  background: rgba(75, 131, 255, 0.12);
+.player-who {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
 }
 
 .player-avatar {
-  width: 39px;
-  height: 39px;
+  width: 36px;
+  height: 36px;
   border-radius: 50%;
   display: grid;
   place-items: center;
-  font-size: 16px;
+  object-fit: cover;
+  font-size: 15px;
   font-weight: 600;
   color: #fff;
   flex: none;
@@ -497,12 +401,11 @@ body {
   flex-direction: column;
   gap: 2px;
   min-width: 0;
-  flex: 1 1 auto;
 }
 
 .player-name {
-  font-size: 15px;
-  font-weight: 600;
+  font-size: 14px;
+  font-weight: 700;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -512,7 +415,7 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 13px;
+  font-size: 12px;
   color: var(--dim);
   font-variant-numeric: tabular-nums;
 }
@@ -520,28 +423,384 @@ body {
 .player-payout {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  font-size: 17px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
+  gap: 6px;
+  font-size: 14px;
   flex: none;
 }
 
-.player-payout--won {
-  color: var(--green);
+.player-value {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
 }
 
-.player-at {
-  font-style: normal;
-  font-size: 12px;
-  color: var(--dim);
+.player-value--won {
+  color: var(--positive);
 }
 
 .players-total {
-  padding: 10px 14px calc(10px + env(safe-area-inset-bottom));
-  border-top: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  margin: 0;
+  padding: 8px 0 20px;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+/* ---------- refusals ---------- */
+
+/* A toast rather than a line in the column: a refusal is over in a moment and
+   must not shove the table down and back while the player is reading it. */
+.notice {
+  position: fixed;
+  left: 50%;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 24px);
+  z-index: 30;
+  margin: 0;
+  max-width: 90vw;
+  padding: 10px 16px;
+  transform: translateX(-50%);
+  border-radius: 12px;
+  background: rgba(255, 48, 100, 0.16);
+  color: var(--destructive);
+  font-size: 13px;
+  text-align: center;
+}
+
+/* ---------- sheets ---------- */
+
+.sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.sheet {
+  width: 100%;
+  max-width: 450px;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 16px);
+  border-radius: 24px 24px 0 0;
+  background: var(--bg);
+  animation: sheet-rise 220ms ease-out;
+  overflow: hidden;
+}
+
+@keyframes sheet-rise {
+  from {
+    transform: translateY(100%);
+  }
+}
+
+.sheet-grip-row {
+  display: grid;
+  place-items: center;
+  height: 32px;
+}
+
+.sheet-grip {
+  width: 48px;
+  height: 4px;
+  border-radius: 999px;
+  background: #fff;
+}
+
+.sheet-head {
+  position: relative;
+}
+
+.sheet-title {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 56px;
+  margin: 0;
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 600;
+}
+
+.sheet-close {
+  position: absolute;
+  top: 8px;
+  right: 16px;
+  display: grid;
+  place-items: center;
+  width: 25px;
+  height: 25px;
+  border: 0;
+  border-radius: 50%;
+  background: #1f1f21;
+  padding: 0;
+  cursor: pointer;
+}
+
+.sheet-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 380px;
+  padding: 0 16px 32px;
+}
+
+.sheet-body--topup {
+  min-height: 0;
+  gap: 12px;
+}
+
+.segment {
+  display: flex;
+  height: 44px;
+  margin-bottom: 16px;
+  padding: 2px;
+  border-radius: 44px;
+  background: var(--sheet-field);
+}
+
+.segment-on {
+  display: grid;
+  place-items: center;
+  flex: 1;
+  height: 40px;
+  border-radius: 40px;
+  background: linear-gradient(90deg, var(--blue-a), var(--blue-b));
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.1px;
+}
+
+.amount-zone {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: center;
+}
+
+.amount-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+/* The star hangs off the right of the number, so the pair is nudged back by
+   its own width to keep the sum itself looking centred. */
+.amount-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding-left: 32px;
+  padding-bottom: 32px;
+}
+
+.amount-input {
+  max-width: 70vw;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 40px;
+  font-weight: 700;
+  line-height: 1;
+  text-align: center;
+  outline: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.amount-input--empty {
+  opacity: 0.7;
+}
+
+.amount-input::placeholder {
+  color: var(--text);
+  opacity: 1;
+}
+
+.quick-row {
+  display: flex;
+  gap: 8px;
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.quick-row::-webkit-scrollbar {
+  display: none;
+}
+
+.quick {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  padding: 8px 16px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--sheet-field);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.quick--on {
+  background: linear-gradient(90deg, var(--blue-a), var(--blue-b));
+}
+
+.auto-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 16px;
+  padding: 0 16px;
+}
+
+.auto-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.auto-box {
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  appearance: none;
+  border: 1px solid var(--blue-b);
+  border-radius: 6px;
+  background: var(--sheet-field);
+}
+
+.auto-box:checked {
+  background: var(--blue-b)
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='%23fff' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round' d='M3.5 8.4l3 3 6-6.4'/%3E%3C/svg%3E")
+    center / 14px no-repeat;
+}
+
+.stepper {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: var(--sheet-field);
+}
+
+.stepper--off {
+  opacity: 0.4;
+}
+
+.stepper-step {
+  width: 40px;
+  height: 40px;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.stepper-value {
+  display: inline-flex;
+  align-items: center;
+  font-weight: 700;
+  cursor: text;
+}
+
+.stepper-x {
+  padding-right: 2px;
+  user-select: none;
+}
+
+.stepper-value input {
+  width: 48px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 16px;
+  font-weight: 700;
+  text-align: center;
+  outline: none;
+}
+
+.sheet-cta {
+  width: 100%;
+  height: 52px;
+  margin-top: 14px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: var(--radius);
+  background: linear-gradient(90deg, var(--blue-a), var(--blue-b));
+  color: var(--text);
+  font-family: inherit;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.sheet-cta:disabled {
+  opacity: 0.5;
+}
+
+/* ---------- top-up ---------- */
+
+.sheet-hint {
+  margin: 0;
   text-align: center;
   font-size: 13px;
   color: var(--dim);
-  flex: none;
+}
+
+.packs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  gap: 8px;
+}
+
+.pack {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 14px 0;
+  border: 0;
+  border-radius: 12px;
+  background: var(--sheet-field);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 16px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.pack:disabled {
+  opacity: 0.45;
+}
+
+.sheet-note {
+  margin: 0;
+  text-align: center;
+  font-size: 13px;
+  color: var(--dim);
+}
+
+.sheet-note--good {
+  color: var(--positive);
+}
+
+.sheet-note--bad {
+  color: var(--destructive);
 }

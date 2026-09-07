@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import lottie, { type AnimationItem } from "lottie-web";
 
-import { curveAt, format, secondsToReach } from "../lib/multiplier";
+import { format, secondsToReach } from "../lib/multiplier";
 import type { Phase } from "../lib/types";
 
 interface Props {
@@ -12,26 +12,44 @@ interface Props {
   phaseEndsAt: number | null;
 }
 
-interface Star {
+interface Spark {
+  /** Fractions of the stage, so a resize never respawns the field. */
   x: number;
   y: number;
-  r: number;
+  size: number;
   alpha: number;
   drift: number;
 }
 
-/** Where the leading edge of the curve sits across the plot. */
-const TIP_AT = 0.82;
-
-const GOLD = "240, 160, 32";
+/** The reference board's palette, taken off its own stylesheet. */
+const ORANGE = "255, 165, 0";
 const GREEN = "0, 255, 0";
-/** The burst colour on the original board is a hot pink, not a dark red. */
-const CRASH = "255, 45, 85";
+const CRASH = "255, 48, 100";
+
+/**
+ * Where the carrot ends up and how long it takes to get there. On the
+ * reference board the clip climbs out of the bottom-left corner over the first
+ * few seconds and then hovers in the top right for the rest of the round --
+ * the number, not the curve, is what carries a long flight.
+ */
+const RISE_SECONDS = 2.4;
+/** How long the trail and the clip take to fade up out of the take-off. */
+const FADE_IN = 0.6;
+const START_X = 0.109;
+const START_Y = 0.9;
+const HOVER_X = 0.818;
+const HOVER_Y = 0.35;
 
 /** Footprint reserved for the carrot-and-bunny clip riding the curve's tip. */
-const CARROT_SIZE = 96;
+const CARROT_SIZE = 150;
 /** The burst clip needs more room than the carrot: it expands well past it. */
-const BURST_SIZE = 220;
+const BURST_SIZE = 240;
+
+/** The retro grid's band: how far above the board it starts, and how deep. */
+const GRID_RISE = 112;
+const GRID_PERIOD = 5;
+/** How much closer together each row sits than the one in front of it. */
+const ROW_RATIO = 0.7;
 
 /**
  * crash-anim.json runs 180 frames at 60fps (3s) top to bottom, but its first
@@ -46,21 +64,38 @@ const BURST_LEN = (BURST_FRAME_END - BURST_FRAME_START) / BURST_FPS;
 
 /**
  * How long the number takes to pop in once it's allowed back on screen --
- * mirrors the ~0.2s ease-out transition the reference board uses whenever it
+ * mirrors the ~0.3s ease-out transition the reference board uses whenever it
  * swaps between states, rather than snapping straight in.
  */
-const POP_IN = 0.22;
+const POP_IN = 0.3;
+
+/** Vertical anchor of the number and the countdown inside the board. */
+const NUMBER_Y = 0.452;
+
+interface Box {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
 
 /**
- * The whole board: starfield, perspective grid and curve on a canvas, with the
- * carrot-and-bunny and crash clips as Lottie layers on top of it (both pulled
- * from the reference board's own assets). Keeping the number on the canvas
- * means the 60fps animation never touches the React tree.
+ * The board and the space around it: starfield and perspective grid over the
+ * whole stage, curve inside the board, with the carrot-and-bunny and crash
+ * clips as Lottie layers on top (both pulled from the reference board's own
+ * assets). Keeping the number on the canvas means the 60fps animation never
+ * touches the React tree.
+ *
+ * The canvas deliberately reaches past the board: on the reference the grid and
+ * the sparkles run the full width of the screen and carry on behind the chips
+ * and the table, and only the curve is boxed in.
  */
 export function CrashCanvas({ phase, multiplier, phaseEndsAt }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const boardRef = useRef<HTMLDivElement>(null);
   const carrotRef = useRef<HTMLDivElement>(null);
   const burstRef = useRef<HTMLDivElement>(null);
+  const barRef = useRef<HTMLSpanElement>(null);
 
   // The render loop reads the latest values through a ref, so it is set up once
   // and never torn down as props change.
@@ -69,18 +104,22 @@ export function CrashCanvas({ phase, multiplier, phaseEndsAt }: Props) {
 
   useEffect(() => {
     const canvas = canvasRef.current;
+    const boardEl = boardRef.current;
     const carrotEl = carrotRef.current;
     const burstEl = burstRef.current;
-    if (!canvas || !carrotEl || !burstEl) return;
+    const barEl = barRef.current;
+    if (!canvas || !boardEl || !carrotEl || !burstEl || !barEl) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    let stars: Star[] = [];
+    let sparks: Spark[] = [];
     let width = 0;
     let height = 0;
+    let board: Box = { x: 0, y: 0, w: 0, h: 0 };
     let carrotSize = CARROT_SIZE;
 
-    // Where the carrot last sat. Flying is the only phase that updates it.
+    // Where the carrot last sat, in page coordinates. Flying is the only phase
+    // that updates it.
     const tip = { x: 0, y: 0 };
     let prevPhase: Phase | null = null;
     let burstStart: number | null = null;
@@ -108,12 +147,21 @@ export function CrashCanvas({ phase, multiplier, phaseEndsAt }: Props) {
       canvas.width = Math.round(width * dpr);
       canvas.height = Math.round(height * dpr);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      stars = makeStars(width, height);
-      tip.x = width / 2;
-      tip.y = height * 0.5;
+      sparks = makeSparks(width, height);
 
-      carrotSize = Math.min(CARROT_SIZE, width * 0.26);
-      const burstSize = Math.min(BURST_SIZE, width * 0.6);
+      // Both the canvas and the board are laid out against the stage, so the
+      // board's offsets are already the box to draw the curve into.
+      board = {
+        x: boardEl.offsetLeft,
+        y: boardEl.offsetTop,
+        w: boardEl.clientWidth,
+        h: boardEl.clientHeight,
+      };
+      tip.x = board.x + board.w * START_X;
+      tip.y = board.y + board.h * START_Y;
+
+      carrotSize = Math.min(CARROT_SIZE, board.w * 0.44);
+      const burstSize = Math.min(BURST_SIZE, board.w * 0.7);
       carrotEl.style.width = `${carrotSize}px`;
       carrotEl.style.height = `${carrotSize}px`;
       burstEl.style.width = `${burstSize}px`;
@@ -123,28 +171,31 @@ export function CrashCanvas({ phase, multiplier, phaseEndsAt }: Props) {
     resize();
     const observer = new ResizeObserver(resize);
     observer.observe(canvas);
+    observer.observe(boardEl);
 
     let frame = 0;
     const start = performance.now();
 
     const render = () => {
       const elapsed = (performance.now() - start) / 1000;
-      const board = latest.current;
+      const state = latest.current;
 
-      if (board.phase === "flying" && prevPhase !== "flying") carrotAnim.play();
-      if (board.phase !== "flying" && prevPhase === "flying") carrotAnim.stop();
-      carrotEl.style.visibility = board.phase === "flying" ? "visible" : "hidden";
-      if (board.phase === "flying") {
-        carrotEl.style.left = `${tip.x}px`;
-        carrotEl.style.top = `${tip.y}px`;
+      if (state.phase === "flying" && prevPhase !== "flying") carrotAnim.play();
+      if (state.phase !== "flying" && prevPhase === "flying") carrotAnim.stop();
+      carrotEl.style.visibility = state.phase === "flying" ? "visible" : "hidden";
+      if (state.phase === "flying") {
+        // The clips live inside the board, the tip is in stage coordinates.
+        carrotEl.style.left = `${tip.x - board.x}px`;
+        carrotEl.style.top = `${tip.y - board.y}px`;
+        carrotEl.style.opacity = String(fadeIn(state.multiplier));
       }
 
-      if (board.phase === "crashed" && prevPhase !== "crashed") {
+      if (state.phase === "crashed" && prevPhase !== "crashed") {
         burstStart = elapsed;
         burstAnim.playSegments([BURST_FRAME_START, BURST_FRAME_END], true);
       }
-      if (board.phase !== "crashed") burstStart = null;
-      prevPhase = board.phase;
+      if (state.phase !== "crashed") burstStart = null;
+      prevPhase = state.phase;
 
       const burstAge = burstStart !== null ? elapsed - burstStart : null;
       const burstPlaying = burstAge !== null && burstAge < BURST_LEN;
@@ -153,12 +204,13 @@ export function CrashCanvas({ phase, multiplier, phaseEndsAt }: Props) {
       // The number gets its own quick pop the instant it's allowed back on
       // screen -- at the start of a fresh flight, or once the burst has had
       // its moment -- rather than snapping straight in.
-      const showNumber = board.phase !== "betting" && !(board.phase === "crashed" && burstPlaying);
+      const showNumber = state.phase !== "betting" && !(state.phase === "crashed" && burstPlaying);
       if (showNumber && numberSince === null) numberSince = elapsed;
       if (!showNumber) numberSince = null;
       const numberAge = numberSince !== null ? elapsed - numberSince : null;
 
-      draw(ctx, width, height, board, stars, elapsed, tip, carrotSize, numberAge);
+      paintBar(barEl, state);
+      draw(ctx, width, height, board, state, sparks, elapsed, tip, carrotSize, numberAge);
       frame = requestAnimationFrame(render);
     };
     frame = requestAnimationFrame(render);
@@ -173,23 +225,48 @@ export function CrashCanvas({ phase, multiplier, phaseEndsAt }: Props) {
 
   return (
     <>
-      <canvas ref={canvasRef} className="crash-canvas" />
-      <div ref={carrotRef} className="crash-lottie" />
-      <div ref={burstRef} className="crash-burst" />
+      <canvas ref={canvasRef} className="stage-canvas" />
+      <div ref={boardRef} className="board">
+        <div ref={carrotRef} className="crash-lottie" />
+        <div ref={burstRef} className="crash-burst" />
+        <div className="board-bar">
+          <span ref={barRef} className="board-bar-fill" />
+        </div>
+      </div>
     </>
   );
 }
 
 type Board = { phase: Phase; multiplier: number; phaseEndsAt: number | null };
 
-function makeStars(width: number, height: number): Star[] {
-  const count = Math.round((width * height) / 2600);
+/**
+ * The thin rail under the board. It measures the climb from one whole
+ * multiplier to the next, so it fills and resets faster the longer a round
+ * runs -- and goes red with the rest of the board when the round bursts.
+ */
+function paintBar(el: HTMLSpanElement, state: Board) {
+  const bar = el.parentElement;
+  if (!bar) return;
+
+  const live = state.phase !== "betting";
+  bar.classList.toggle("board-bar--on", live);
+  if (!live) return;
+
+  const whole = state.multiplier / 100;
+  el.style.width = `${Math.min(100, (whole - Math.floor(whole)) * 100)}%`;
+  el.classList.toggle("board-bar-fill--crashed", state.phase === "crashed");
+}
+
+function makeSparks(width: number, height: number): Spark[] {
+  const count = Math.round((width * height) / 6500);
   return Array.from({ length: count }, () => ({
-    x: Math.random() * width,
-    y: Math.random() * height,
-    r: Math.random() * 1.2 + 0.3,
-    alpha: Math.random() * 0.6 + 0.2,
-    drift: Math.random() * 6 + 2,
+    x: Math.random(),
+    y: Math.random(),
+    // The reference scatters 3px to 12px sparkles; most of them are the small
+    // ones, so bias the roll rather than spreading it evenly.
+    size: 3 + Math.round(Math.random() ** 3 * 9),
+    alpha: 0.3 + Math.random() * 0.4,
+    drift: Math.random() * 5 + 2,
   }));
 }
 
@@ -197,8 +274,9 @@ function draw(
   ctx: CanvasRenderingContext2D,
   width: number,
   height: number,
-  board: Board,
-  stars: Star[],
+  board: Box,
+  state: Board,
+  sparks: Spark[],
   elapsed: number,
   tip: { x: number; y: number },
   carrotSize: number,
@@ -208,213 +286,267 @@ function draw(
   ctx.fillStyle = "#000000";
   ctx.fillRect(0, 0, width, height);
 
-  drawStars(ctx, height, stars, elapsed);
+  drawSparks(ctx, width, height, sparks, elapsed);
 
-  // After the burst the original clears the board back to bare space and leaves
-  // only the number standing, so the grid and the curve go with it.
-  if (board.phase === "flying") {
-    drawGrid(ctx, width, height, elapsed);
-    drawCurve(ctx, width, height, board.multiplier, tip, carrotSize);
+  // The grid is up for as long as a round is on, burst and all; only the trail
+  // goes with the carrot, which is why the reference board reads as empty space
+  // again the moment the round settles.
+  if (state.phase !== "betting") drawGrid(ctx, width, board, elapsed);
+  if (state.phase === "flying") {
+    drawCurve(ctx, board, state.multiplier, tip, carrotSize, elapsed);
   }
 
-  if (board.phase === "betting") {
-    drawCountdown(ctx, width, height, board.phaseEndsAt);
+  if (state.phase === "betting") {
+    drawCountdown(ctx, board, state.phaseEndsAt);
     return;
   }
 
-  if (numberAge !== null) drawMultiplier(ctx, width, height, board, numberAge);
+  if (numberAge !== null) drawMultiplier(ctx, board, state, numberAge);
 }
 
-function drawStars(
+function drawSparks(
   ctx: CanvasRenderingContext2D,
+  width: number,
   height: number,
-  stars: Star[],
+  sparks: Spark[],
   elapsed: number,
 ) {
-  for (const star of stars) {
-    // Wrap rather than respawn, so the field never visibly thins out.
-    const y = (star.y + elapsed * star.drift) % height;
-    const twinkle = 0.75 + 0.25 * Math.sin(elapsed * 2 + star.x);
-
-    ctx.beginPath();
-    ctx.arc(star.x, y, star.r, 0, Math.PI * 2);
-    ctx.fillStyle = `rgba(255, 255, 255, ${star.alpha * twinkle})`;
-    ctx.fill();
-  }
-}
-
-/** A ceiling grid running back to a vanishing point, fading as it comes down. */
-function drawGrid(ctx: CanvasRenderingContext2D, width: number, height: number, elapsed: number) {
-  const horizon = height * 0.46;
-  const vanishX = width / 2;
-  const vanishY = -height * 0.15;
-
   ctx.save();
-  ctx.beginPath();
-  ctx.rect(0, 0, width, horizon);
-  ctx.clip();
-  ctx.lineWidth = 1;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
 
-  for (let i = -8; i <= 8; i++) {
-    const x = vanishX + (i * width) / 5;
-    const fade = 0.2 * (1 - Math.abs(i) / 10);
-    ctx.strokeStyle = `rgba(255, 255, 255, ${Math.max(fade, 0.03)})`;
-    ctx.beginPath();
-    ctx.moveTo(vanishX, vanishY);
-    ctx.lineTo(x, horizon);
-    ctx.stroke();
-  }
-
-  // Rows crawl forward so the grid reads as motion rather than wallpaper.
-  const scroll = (elapsed * 0.7) % 1;
-  for (let row = 0; row < 14; row++) {
-    const t = (row + scroll) / 14;
-    const y = vanishY + (horizon - vanishY) * t * t;
-    if (y < 0 || y > horizon) continue;
-    ctx.strokeStyle = `rgba(255, 255, 255, ${0.2 * t})`;
-    ctx.beginPath();
-    ctx.moveTo(0, y);
-    ctx.lineTo(width, y);
-    ctx.stroke();
+  for (const spark of sparks) {
+    // Wrap rather than respawn, so the field never visibly thins out.
+    const y = ((spark.y * height + elapsed * spark.drift) % height + height) % height;
+    ctx.font = `${spark.size}px system-ui, sans-serif`;
+    ctx.fillStyle = `rgba(255, 255, 255, ${spark.alpha})`;
+    ctx.fillText("✦", spark.x * width, y);
   }
 
   ctx.restore();
 }
 
+/**
+ * The retro grid: a plane running back to a vanishing point just inside the top
+ * of the board, crawling towards the viewer. It reaches the full width of the
+ * screen rather than stopping at the board, which is what makes the board read
+ * as a window onto something bigger.
+ */
+function drawGrid(ctx: CanvasRenderingContext2D, width: number, board: Box, elapsed: number) {
+  const horizon = board.y + board.h * 0.08;
+  const back = board.y - GRID_RISE + 400;
+  const depth = back - horizon;
+  if (depth <= 0) return;
+
+  // The nearest row and the ratio between rows. Rows step back by a constant
+  // factor rather than as 1/n: measured off the reference board, that is the
+  // spacing that puts a line where it puts one, all the way from the front of
+  // the plane to the haze at the horizon.
+  const front = depth * 0.74;
+  const vanishX = width / 2;
+  const spread = width * 0.227;
+  const scroll = (elapsed / GRID_PERIOD) % 1;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, horizon, width, depth);
+  ctx.clip();
+  ctx.lineWidth = 1;
+
+  // Columns are straight lines out of the vanishing point, so they can be drawn
+  // once, full length, and left to the fade to trail off. They have to die out
+  // at both ends: solid to the apex they would converge into a sunburst the
+  // reference board does not have, solid to the front they would outshine the
+  // rows they are supposed to sit under.
+  const columns = ctx.createLinearGradient(0, horizon, 0, horizon + front);
+  columns.addColorStop(0, "rgba(128, 128, 128, 0)");
+  columns.addColorStop(0.5, "rgba(128, 128, 128, 0.26)");
+  columns.addColorStop(1, "rgba(128, 128, 128, 0)");
+  ctx.strokeStyle = columns;
+  for (let j = -6; j <= 6; j++) {
+    ctx.beginPath();
+    ctx.moveTo(vanishX, horizon);
+    ctx.lineTo(vanishX + j * spread, horizon + front);
+    ctx.stroke();
+  }
+
+  for (let n = 0; n < 20; n++) {
+    const near = front * Math.pow(ROW_RATIO, n + scroll);
+    const y = horizon + near;
+    // Brightest just under the horizon, gone by the front of the plane: the
+    // reference lays a black gradient over the near end of the grid.
+    const reach = near / front;
+    const fade = 1 - reach;
+
+    ctx.strokeStyle = `rgba(128, 128, 128, ${0.34 * fade})`;
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(width, y);
+    ctx.stroke();
+
+    // A dot on every crossing, shrinking with the row it sits on.
+    const radius = Math.max(0.5, 2.4 * reach);
+    ctx.fillStyle = `rgba(255, 255, 255, ${0.45 * fade})`;
+    for (let j = -6; j <= 6; j++) {
+      const x = vanishX + j * spread * reach;
+      ctx.beginPath();
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  ctx.restore();
+}
+
+/**
+ * The trail: one quadratic sweep out of the bottom-left corner up to whatever
+ * the carrot is doing, filled underneath and cut off square below the tip.
+ */
 function drawCurve(
   ctx: CanvasRenderingContext2D,
-  width: number,
-  height: number,
+  board: Box,
   multiplier: number,
   tip: { x: number; y: number },
   carrotSize: number,
+  elapsed: number,
 ) {
-  const padBottom = height * 0.1;
-  const plotW = width * 0.92;
-  const plotH = height - padBottom - height * 0.14;
-
   const flown = secondsToReach(multiplier);
-  // The tip holds a fixed fraction of the width and the time window scrolls
-  // under it, so the curve fills the frame from the first second.
-  const spanSeconds = Math.max(flown / TIP_AT, 2.2);
-  const spanTop = Math.max(multiplier, 180);
+  const climb = Math.min(1, flown / RISE_SECONDS);
+  // Ease out, so the climb slows into the hover instead of stopping dead.
+  const eased = 1 - Math.pow(1 - climb, 2.2);
 
-  // Sample the unrounded curve: multiplierAt quantises to whole hundredths, so
-  // consecutive samples land on the same pixel row and the line comes out as a
-  // staircase.
-  const pointAt = (t: number): [number, number] => [
-    (t / spanSeconds) * plotW,
-    height - padBottom - ((curveAt(t) - 100) / (spanTop - 100)) * plotH,
-  ];
+  // Once it is up there the clip never sits perfectly still: the reference
+  // drifts it around by a few pixels for the rest of the round.
+  const hover = climb >= 1 ? 1 : 0;
+  const tipX =
+    board.w * (START_X + (HOVER_X - START_X) * eased) + hover * Math.sin(elapsed * 1.1) * 7;
+  const tipY =
+    board.h * (START_Y - (START_Y - HOVER_Y) * eased) + hover * Math.sin(elapsed * 0.8) * 5;
 
-  const samples = 160;
-  const path = new Path2D();
-  path.moveTo(...pointAt(0));
-  for (let i = 1; i <= samples; i++) {
-    path.lineTo(...pointAt((flown * i) / samples));
-  }
+  const originX = 0;
+  const originY = board.h - 2;
+  const controlX = tipX / 2;
+  const controlY = board.h;
 
-  const [tipX, tipY] = pointAt(flown);
+  ctx.save();
+  ctx.globalAlpha = fadeIn(multiplier);
+  ctx.translate(board.x, board.y);
 
-  const filled = new Path2D(path);
-  filled.lineTo(tipX, height - padBottom);
-  filled.lineTo(0, height - padBottom);
-  filled.closePath();
+  const stroke = ctx.createLinearGradient(0, originY, tipX, tipY);
+  stroke.addColorStop(0, `rgba(${ORANGE}, 0.3)`);
+  stroke.addColorStop(1, `rgba(${ORANGE}, 1)`);
 
-  const gradient = ctx.createLinearGradient(0, tipY, 0, height - padBottom);
-  gradient.addColorStop(0, `rgba(${GOLD}, 0.34)`);
-  gradient.addColorStop(1, `rgba(${GOLD}, 0)`);
-  ctx.fillStyle = gradient;
-  ctx.fill(filled);
+  const fill = ctx.createLinearGradient(0, originY, tipX, tipY);
+  fill.addColorStop(0, `rgba(${ORANGE}, 0.1)`);
+  fill.addColorStop(1, `rgba(${ORANGE}, 0.3)`);
 
-  ctx.strokeStyle = `rgb(${GOLD})`;
-  ctx.lineWidth = 3;
-  ctx.lineJoin = "round";
+  const under = new Path2D();
+  under.moveTo(originX, originY);
+  under.quadraticCurveTo(controlX, controlY, tipX, tipY + 10);
+  under.lineTo(tipX, originY);
+  under.closePath();
+  ctx.fillStyle = fill;
+  ctx.fill(under);
+
+  const line = new Path2D();
+  line.moveTo(originX, originY);
+  line.quadraticCurveTo(controlX, controlY, tipX, tipY);
+  ctx.strokeStyle = stroke;
+  ctx.lineWidth = 3.5;
   ctx.lineCap = "round";
-  ctx.shadowColor = `rgba(${GOLD}, 0.7)`;
-  ctx.shadowBlur = 12;
-  ctx.stroke(path);
-  ctx.shadowBlur = 0;
+  ctx.shadowColor = `rgba(${ORANGE}, 0.8)`;
+  ctx.shadowBlur = 6;
+  ctx.stroke(line);
+
+  ctx.restore();
 
   // Kept inside the board so the clip never half-hangs off an edge.
-  tip.x = clamp(tipX, carrotSize * 0.5, width - carrotSize * 0.5);
-  tip.y = clamp(tipY, carrotSize * 0.5, height - carrotSize * 0.5);
+  tip.x = board.x + clamp(tipX, carrotSize * 0.34, board.w - carrotSize * 0.34);
+  tip.y = board.y + clamp(tipY, carrotSize * 0.34, board.h - carrotSize * 0.34);
 }
 
 function clamp(value: number, low: number, high: number): number {
   return Math.min(Math.max(value, low), high);
 }
 
-/** Big numbers counting the betting window down. */
-function drawCountdown(
-  ctx: CanvasRenderingContext2D,
-  width: number,
-  height: number,
-  endsAt: number | null,
-) {
+/**
+ * How far up the trail and the carrot have come out of the take-off. The
+ * reference board holds both at nothing for the first instant of a round and
+ * cross-fades them in, so a fresh round opens on bare space rather than
+ * snapping a curve onto the board.
+ */
+function fadeIn(multiplier: number): number {
+  // Squared, so the first tenth of a second really is nothing: a carrot at a
+  // quarter opacity is still perfectly legible against a black board, and it
+  // would be sitting off the bottom-left corner where the reference shows
+  // empty space.
+  return Math.min(1, secondsToReach(multiplier) / FADE_IN) ** 2;
+}
+
+/** The seconds left before take-off, alone on the board behind a soft halo. */
+function drawCountdown(ctx: CanvasRenderingContext2D, board: Box, endsAt: number | null) {
   const remaining = endsAt === null ? 0 : Math.max(0, endsAt - Date.now());
-
-  ctx.save();
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-
-  ctx.font = fontOf(Math.min(width * 0.055, 22));
-  ctx.fillStyle = "rgba(255, 255, 255, 0.5)";
-  ctx.fillText("Ожидание раунда", width / 2, height * 0.24);
+  const x = board.x + board.w / 2;
+  const y = board.y + board.h * NUMBER_Y;
 
   // Each digit swells as its second begins and settles, so take-off is felt
   // rather than read.
   const intoSecond = 1 - (remaining % 1000) / 1000;
-  const size = Math.min(width * 0.42, height * 0.46) * (1 + 0.06 * (1 - intoSecond));
+  const size = Math.min(board.w * 0.42, board.h * 0.48) * (1 + 0.06 * (1 - intoSecond));
 
+  ctx.save();
+
+  const halo = ctx.createRadialGradient(x, y, 0, x, y, size * 0.8);
+  halo.addColorStop(0, "rgba(255, 255, 255, 0.2)");
+  halo.addColorStop(1, "rgba(255, 255, 255, 0)");
+  ctx.fillStyle = halo;
+  ctx.fillRect(x - size * 0.8, y - size * 0.8, size * 1.6, size * 1.6);
+
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
   ctx.font = fontOf(size);
-  ctx.fillStyle = "rgba(255, 255, 255, 0.92)";
-  ctx.shadowColor = "rgba(255, 255, 255, 0.35)";
-  ctx.shadowBlur = 24;
-  ctx.fillText(String(Math.max(Math.ceil(remaining / 1000), 0)), width / 2, height * 0.55);
+  ctx.fillStyle = "#ffffff";
+  ctx.shadowColor = "rgba(255, 255, 255, 0.5)";
+  ctx.shadowBlur = 40;
+  ctx.fillText(String(Math.max(Math.ceil(remaining / 1000), 0)), x, y);
   ctx.restore();
 }
 
 function drawMultiplier(
   ctx: CanvasRenderingContext2D,
-  width: number,
-  height: number,
-  board: Board,
+  board: Box,
+  state: Board,
   age: number,
 ) {
-  const text = `x${format(board.multiplier)}`;
-  const tone = board.phase === "crashed" ? CRASH : GREEN;
-  // While it's flying the carrot owns the right side of the board, so the
-  // number sits small in the clear space on the left rather than spanning the
-  // centre on top of it. Once crashed there's nothing to share the board
-  // with, so it gets the big centred reveal back.
-  const compact = board.phase === "flying";
+  const text = `x${format(state.multiplier)}`;
+  const crashed = state.phase === "crashed";
+  const tone = crashed ? CRASH : GREEN;
 
-  // Ease-out cubic, settling from slightly below and a touch smaller rather
-  // than snapping straight to full size in place.
+  // Ease-out cubic, settling from half size rather than snapping straight in:
+  // the reference cross-fades the same element between a small green number
+  // parked left of the carrot and a big red one in the middle of the board.
   const t = Math.min(age / POP_IN, 1);
   const eased = 1 - Math.pow(1 - t, 3);
+
+  const maxSize = crashed ? board.w * 0.28 : board.w * 0.14;
+  const maxWidth = crashed ? board.w * 0.95 : board.w * 0.5;
+  const x = board.x + board.w / 2 - (crashed ? 0 : board.w * 0.233);
+  const y = board.y + board.h * NUMBER_Y;
 
   ctx.save();
   ctx.globalAlpha = eased;
   // Fit by measuring rather than trusting a fixed size: without SF Pro the
-  // stack falls back to a noticeably wider face, and a hard-coded 96px then
+  // stack falls back to a noticeably wider face, and a hard-coded size then
   // stretches the number right across the board.
-  const maxWidth = compact ? width * 0.4 : width * 0.52;
-  const maxSize = compact
-    ? Math.min(width * 0.15, height * 0.18)
-    : Math.min(width * 0.24, height * 0.3);
   ctx.font = fontOf(fitFont(ctx, text, maxWidth, maxSize));
-  ctx.textAlign = compact ? "left" : "center";
+  ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.fillStyle = `rgb(${tone})`;
   ctx.shadowColor = `rgb(${tone})`;
-  ctx.shadowBlur = board.phase === "crashed" ? 34 : 20;
+  ctx.shadowBlur = crashed ? 40 : 20;
 
-  const x = compact ? width * 0.07 : width / 2;
-  const y = height * 0.38;
-  const scale = 0.85 + 0.15 * eased;
-  ctx.translate(x, y + (1 - eased) * height * 0.03);
+  const scale = 0.5 + 0.5 * eased;
+  ctx.translate(x, y);
   ctx.scale(scale, scale);
   ctx.fillText(text, 0, 0);
   ctx.restore();

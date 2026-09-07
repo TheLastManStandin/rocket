@@ -2,6 +2,7 @@ import { useState } from "react";
 
 import { createInvoice } from "../lib/api";
 import { haptic, openInvoice } from "../lib/telegram";
+import { Star } from "./Star";
 
 interface Props {
   token: string;
@@ -63,44 +64,51 @@ export function TopUpSheet({ token, packages, onClose }: Props) {
     <div className="sheet-backdrop" onClick={onClose}>
       {/* The sheet swallows taps so only the backdrop closes it. */}
       <div className="sheet" onClick={(e) => e.stopPropagation()}>
-        <div className="sheet-grip" />
-        <h2 className="sheet-title">Пополнить баланс</h2>
-        <p className="sheet-hint">1 звезда — 1 к балансу</p>
-
-        <div className="packs">
-          {packages.map((stars) => (
-            <button
-              key={stars}
-              className="pack"
-              disabled={busy}
-              onClick={() => void buy(stars)}
-            >
-              <svg viewBox="0 0 24 24" className="star" aria-hidden="true">
-                <path
-                  fill="currentColor"
-                  d="m12 2.6 2.9 5.9 6.5.9-4.7 4.6 1.1 6.4-5.8-3-5.8 3 1.1-6.4L2.6 9.4l6.5-.9z"
-                />
-              </svg>
-              {stars}
-            </button>
-          ))}
+        <div className="sheet-grip-row">
+          <span className="sheet-grip" />
         </div>
 
-        {stage.kind === "waiting" && (
-          <p className="sheet-note">Открываю счёт на {stage.stars}...</p>
-        )}
-        {stage.kind === "paid" && (
-          <p className="sheet-note sheet-note--good">
-            Оплачено: {stage.stars}. Баланс обновится через секунду.
-          </p>
-        )}
-        {stage.kind === "failed" && (
-          <p className="sheet-note sheet-note--bad">{stage.message}</p>
-        )}
+        <div className="sheet-head">
+          <button className="sheet-close" onClick={onClose} aria-label="Закрыть">
+            <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+              <path
+                fill="#fff"
+                d="M12.293 2.293a1 1 0 1 1 1.414 1.414L9.414 8l4.293 4.293a1 1 0 0 1-1.414 1.414L8 9.414l-4.293 4.293a1 1 0 1 1-1.414-1.414L6.586 8 2.293 3.707a1 1 0 0 1 1.414-1.414L8 6.586z"
+              />
+            </svg>
+          </button>
+          <h2 className="sheet-title">Пополнить баланс</h2>
+        </div>
 
-        <button className="sheet-close" onClick={onClose}>
-          Закрыть
-        </button>
+        <div className="sheet-body sheet-body--topup">
+          <p className="sheet-hint">1 звезда — 1 к балансу</p>
+
+          <div className="packs">
+            {packages.map((stars) => (
+              <button
+                key={stars}
+                className="pack"
+                disabled={busy}
+                onClick={() => void buy(stars)}
+              >
+                {stars}
+                <Star className="star--quick" />
+              </button>
+            ))}
+          </div>
+
+          {stage.kind === "waiting" && (
+            <p className="sheet-note">Открываю счёт на {stage.stars}...</p>
+          )}
+          {stage.kind === "paid" && (
+            <p className="sheet-note sheet-note--good">
+              Оплачено: {stage.stars}. Баланс обновится через секунду.
+            </p>
+          )}
+          {stage.kind === "failed" && (
+            <p className="sheet-note sheet-note--bad">{stage.message}</p>
+          )}
+        </div>
       </div>
     </div>
   );

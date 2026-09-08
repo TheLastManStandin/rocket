@@ -15,8 +15,13 @@ build: front
 front:
 	cd web && npm install && npm run build
 
+# DEV_MODE is set here rather than in .env so the file can stay production-
+# shaped: godotenv never overrides what is already in the environment, so this
+# wins. It skips the Telegram signature check and signs you in as a test
+# player, which is what opens the Mini App in a plain browser. `make telegram`
+# is the target that runs it for real.
 dev: db
-	go run ./cmd/server
+	DEV_MODE=true go run ./cmd/server
 
 telegram:
 	./scripts/telegram.sh

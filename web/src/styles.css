@@ -233,39 +233,6 @@ body {
   transform: translate(-50%, -50%) scale(1);
 }
 
-.board-bar {
-  position: absolute;
-  left: 50%;
-  bottom: 16px;
-  width: 128px;
-  height: 4px;
-  transform: translateX(-50%);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.15);
-  overflow: hidden;
-  opacity: 0;
-  transition: opacity 200ms ease-out;
-  pointer-events: none;
-}
-
-.board-bar--on {
-  opacity: 1;
-}
-
-.board-bar-fill {
-  display: block;
-  height: 100%;
-  width: 0;
-  background: var(--positive);
-  box-shadow: 0 0 8px rgba(66, 255, 132, 0.6);
-  transition: width 200ms ease-out;
-}
-
-.board-bar-fill--crashed {
-  background: var(--destructive);
-  box-shadow: 0 0 8px rgba(255, 48, 100, 0.6);
-}
-
 /* ---------- history ---------- */
 
 .history {

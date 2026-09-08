@@ -47,9 +47,21 @@ const BURST_SIZE = 240;
 
 /** The retro grid's band: how far above the board it starts, and how deep. */
 const GRID_RISE = 112;
-const GRID_PERIOD = 5;
+/** Seconds the grid takes to crawl one row forward. Lower is faster. */
+const GRID_PERIOD = 2.4;
 /** How much closer together each row sits than the one in front of it. */
 const ROW_RATIO = 0.7;
+
+/**
+ * The sparkle field drifting down the stage. One square of stage per sparkle
+ * for DENSITY, glyph sizes from MIN up to MIN + SPREAD, and the fall in pixels
+ * a second between DRIFT and DRIFT + DRIFT_SPREAD.
+ */
+const SPARK_DENSITY = 6500;
+const SPARK_MIN_SIZE = 4;
+const SPARK_SIZE_SPREAD = 12;
+const SPARK_MIN_DRIFT = 9;
+const SPARK_DRIFT_SPREAD = 17;
 
 /**
  * crash-anim.json runs 180 frames at 60fps (3s) top to bottom, but its first
@@ -95,7 +107,6 @@ export function CrashCanvas({ phase, multiplier, phaseEndsAt }: Props) {
   const boardRef = useRef<HTMLDivElement>(null);
   const carrotRef = useRef<HTMLDivElement>(null);
   const burstRef = useRef<HTMLDivElement>(null);
-  const barRef = useRef<HTMLSpanElement>(null);
 
   // The render loop reads the latest values through a ref, so it is set up once
   // and never torn down as props change.
@@ -107,8 +118,7 @@ export function CrashCanvas({ phase, multiplier, phaseEndsAt }: Props) {
     const boardEl = boardRef.current;
     const carrotEl = carrotRef.current;
     const burstEl = burstRef.current;
-    const barEl = barRef.current;
-    if (!canvas || !boardEl || !carrotEl || !burstEl || !barEl) return;
+    if (!canvas || !boardEl || !carrotEl || !burstEl) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
@@ -209,7 +219,6 @@ export function CrashCanvas({ phase, multiplier, phaseEndsAt }: Props) {
       if (!showNumber) numberSince = null;
       const numberAge = numberSince !== null ? elapsed - numberSince : null;
 
-      paintBar(barEl, state);
       draw(ctx, width, height, board, state, sparks, elapsed, tip, carrotSize, numberAge);
       frame = requestAnimationFrame(render);
     };
@@ -229,9 +238,6 @@ export function CrashCanvas({ phase, multiplier, phaseEndsAt }: Props) {
       <div ref={boardRef} className="board">
         <div ref={carrotRef} className="crash-lottie" />
         <div ref={burstRef} className="crash-burst" />
-        <div className="board-bar">
-          <span ref={barRef} className="board-bar-fill" />
-        </div>
       </div>
     </>
   );
@@ -239,34 +245,16 @@ export function CrashCanvas({ phase, multiplier, phaseEndsAt }: Props) {
 
 type Board = { phase: Phase; multiplier: number; phaseEndsAt: number | null };
 
-/**
- * The thin rail under the board. It measures the climb from one whole
- * multiplier to the next, so it fills and resets faster the longer a round
- * runs -- and goes red with the rest of the board when the round bursts.
- */
-function paintBar(el: HTMLSpanElement, state: Board) {
-  const bar = el.parentElement;
-  if (!bar) return;
-
-  const live = state.phase !== "betting";
-  bar.classList.toggle("board-bar--on", live);
-  if (!live) return;
-
-  const whole = state.multiplier / 100;
-  el.style.width = `${Math.min(100, (whole - Math.floor(whole)) * 100)}%`;
-  el.classList.toggle("board-bar-fill--crashed", state.phase === "crashed");
-}
-
 function makeSparks(width: number, height: number): Spark[] {
-  const count = Math.round((width * height) / 6500);
+  const count = Math.round((width * height) / SPARK_DENSITY);
   return Array.from({ length: count }, () => ({
     x: Math.random(),
     y: Math.random(),
-    // The reference scatters 3px to 12px sparkles; most of them are the small
-    // ones, so bias the roll rather than spreading it evenly.
-    size: 3 + Math.round(Math.random() ** 3 * 9),
+    // Most sparkles are the small ones with the odd big one among them, so the
+    // roll is biased rather than spread evenly across the range.
+    size: SPARK_MIN_SIZE + Math.round(Math.random() ** 3 * SPARK_SIZE_SPREAD),
     alpha: 0.3 + Math.random() * 0.4,
-    drift: Math.random() * 5 + 2,
+    drift: SPARK_MIN_DRIFT + Math.random() * SPARK_DRIFT_SPREAD,
   }));
 }
 

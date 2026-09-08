@@ -32,8 +32,9 @@ type command struct {
 }
 
 const (
-	cmdBet     = "bet"
-	cmdCashOut = "cashout"
+	cmdBet       = "bet"
+	cmdCashOut   = "cashout"
+	cmdCancelBet = "cancel_bet"
 )
 
 type Deps struct {
@@ -125,6 +126,8 @@ func readCommands(
 			_, refusal = s.PlaceBet(ctx, cmd.Amount)
 		case cmdCashOut:
 			_, _, _, refusal = s.CashOut(ctx)
+		case cmdCancelBet:
+			_, refusal = s.CancelBet(ctx)
 		default:
 			refusal = errors.New("unknown command")
 		}
@@ -153,6 +156,10 @@ func codeFor(err error) string {
 		return "bets_closed"
 	case errors.Is(err, game.ErrAlreadyBet):
 		return "already_bet"
+	case errors.Is(err, game.ErrAlreadyQueued):
+		return "already_queued"
+	case errors.Is(err, game.ErrNoQueuedBet):
+		return "no_queued_bet"
 	case errors.Is(err, game.ErrStakeOutOfRange):
 		return "stake_out_of_range"
 	case errors.Is(err, game.ErrNotFlying):

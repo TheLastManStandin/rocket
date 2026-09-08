@@ -169,6 +169,10 @@ func (s *Session) do(ctx context.Context, fn func(*game.Game, time.Time)) error 
 // PlaceBet takes the stake before recording it, so a bet can never be accepted
 // without the money behind it. If the round moves on in between, the stake goes
 // straight back.
+//
+// A stake offered while the rocket is already up waits for the next round. It
+// is paid for now either way: the game seats it when that round opens, and
+// that path must not need the wallet.
 func (s *Session) PlaceBet(ctx context.Context, amount int64) (int64, error) {
 	if amount < s.cfg.MinBet || amount > s.cfg.MaxBet {
 		return 0, game.ErrStakeOutOfRange
@@ -180,8 +184,11 @@ func (s *Session) PlaceBet(ctx context.Context, amount int64) (int64, error) {
 		return 0, err
 	}
 
+	var placement game.Placement
 	recorded := error(nil)
-	if err := s.do(ctx, func(g *game.Game, _ time.Time) { recorded = g.PlaceBet(amount) }); err != nil {
+	if err := s.do(ctx, func(g *game.Game, _ time.Time) {
+		placement, recorded = g.PlaceBet(amount)
+	}); err != nil {
 		recorded = err
 	}
 	if recorded != nil {
@@ -191,7 +198,41 @@ func (s *Session) PlaceBet(ctx context.Context, amount int64) (int64, error) {
 		return balance, recorded
 	}
 
-	s.broadcast([]game.Event{{Type: game.EventBetPlaced, Amount: amount, Balance: balance}})
+	announced := game.EventBetPlaced
+	if placement == game.QueuedForNext {
+		announced = game.EventBetQueued
+	}
+	s.broadcast([]game.Event{{Type: announced, Amount: amount, Balance: balance}})
+	return balance, nil
+}
+
+// CancelBet takes back a stake that is still waiting for the next round.
+//
+// The stake leaves the game before the refund goes out. The other order would
+// let the round open in between and seat a bet that has already been paid
+// back.
+func (s *Session) CancelBet(ctx context.Context) (int64, error) {
+	var (
+		amount  int64
+		removed error
+	)
+	if err := s.do(ctx, func(g *game.Game, _ time.Time) {
+		amount, removed = g.CancelQueuedBet()
+	}); err != nil {
+		return 0, err
+	}
+	if removed != nil {
+		return 0, removed
+	}
+
+	balance, err := s.wallet.Credit(ctx, s.userID, amount, wallet.ReasonRefund, fmt.Sprintf("user:%d", s.userID))
+	if err != nil {
+		// The stake is already out of the game, so the ledger is what owes the
+		// player; say so rather than pretending it came back.
+		return 0, fmt.Errorf("session: refunding a cancelled bet: %w", err)
+	}
+
+	s.broadcast([]game.Event{{Type: game.EventBetCancelled, Balance: balance}})
 	return balance, nil
 }
 

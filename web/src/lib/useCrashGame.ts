@@ -22,6 +22,11 @@ export interface CrashState {
   history: number[];
   balance: number;
   bet: PlayerBet | null;
+  /**
+   * A stake taken while the last round was in the air, in Stars. It is already
+   * paid for; the server seats it when the next round opens.
+   */
+  queued: number | null;
   error: string | null;
 }
 
@@ -36,12 +41,15 @@ const initialState: CrashState = {
   history: [],
   balance: 0,
   bet: null,
+  queued: null,
   error: null,
 };
 
 const REFUSALS: Record<string, string> = {
   bets_closed: "Ставки на этот раунд уже закрыты",
   already_bet: "Ставка на этот раунд уже сделана",
+  already_queued: "Ставка на следующий раунд уже сделана",
+  no_queued_bet: "Отменять нечего",
   stake_out_of_range: "Такая сумма недоступна",
   not_flying: "Не успели — ракета уже взорвалась",
   no_bet: "Ставка не сделана",
@@ -69,6 +77,7 @@ export function useCrashGame(token: string | null) {
 
   const bet = useCallback((amount: number) => send({ type: "bet", amount }), [send]);
   const cashOut = useCallback(() => send({ type: "cashout" }), [send]);
+  const cancelBet = useCallback(() => send({ type: "cancel_bet" }), [send]);
 
   useEffect(() => {
     if (!token) return;
@@ -131,7 +140,7 @@ export function useCrashGame(token: string | null) {
     return () => cancelAnimationFrame(frame);
   }, [state.phase]);
 
-  return { state, bet, cashOut };
+  return { state, bet, cashOut, cancelBet };
 }
 
 function reduce(
@@ -157,6 +166,7 @@ function reduce(
         bet: e.amount
           ? { amount: e.amount, cashedOutAt: e.payout ? e.multiplier : undefined, payout: e.payout }
           : null,
+        queued: e.queuedAmount ?? null,
         error: null,
       };
     }
@@ -173,7 +183,11 @@ function reduce(
         // whatever is left of it.
         bettingWindowMs: e.endsInMs ?? s.bettingWindowMs,
         bots: e.bots ?? [],
+        // A stake that was waiting arrives seated: the server sends bet_placed
+        // straight after this, with no balance on it, because the money went
+        // when the stake was taken.
         bet: null,
+        queued: null,
         error: null,
       };
 
@@ -221,9 +235,21 @@ function reduce(
       return {
         ...s,
         bet: { amount: e.amount ?? 0 },
+        queued: null,
         balance: e.balance ?? s.balance,
         error: null,
       };
+
+    case EVENT.betQueued:
+      return {
+        ...s,
+        queued: e.amount ?? 0,
+        balance: e.balance ?? s.balance,
+        error: null,
+      };
+
+    case EVENT.betCancelled:
+      return { ...s, queued: null, balance: e.balance ?? s.balance };
 
     case EVENT.cashedOut:
       return {

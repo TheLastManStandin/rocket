@@ -28,7 +28,7 @@ export function App() {
       .catch((err: Error) => setFailure(err.message));
   }, []);
 
-  const { state, bet, cashOut } = useCrashGame(account?.token ?? null);
+  const { state, bet, cashOut, cancelBet } = useCrashGame(account?.token ?? null);
 
   // The balance the socket reports wins once it has said anything; the auth
   // response only seeds the very first paint.
@@ -37,11 +37,12 @@ export function App() {
   useSettlementHaptics(state.phase, state.bet);
   useAutoCashOut(state, autoCashOut, cashOut);
 
-  // The menu takes bets on the round that is open; once it takes off there is
-  // nothing left for it to do.
+  // The menu stays valid whatever the round is doing -- outside the window it
+  // takes bets on the next one -- so it closes on the stake landing, not on
+  // the phase turning over.
   useEffect(() => {
-    if (state.phase !== "betting" || state.bet) setBetting(false);
-  }, [state.phase, state.bet]);
+    if (state.bet || state.queued !== null) setBetting(false);
+  }, [state.bet, state.queued]);
 
   if (failure) {
     return (
@@ -89,8 +90,10 @@ export function App() {
         <BetButton
           phase={state.phase}
           bet={state.bet}
+          queued={state.queued}
           connected={state.connected}
           onOpen={() => setBetting(true)}
+          onCancel={cancelBet}
           onCashOut={cashOut}
         />
 

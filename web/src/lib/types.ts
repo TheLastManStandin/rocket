@@ -29,6 +29,8 @@ export interface ServerEvent {
   payout?: number;
   balance?: number;
   history?: number[];
+  /** A stake waiting for the next round, on a snapshot. */
+  queuedAmount?: number;
   code?: string;
   message?: string;
 }
@@ -42,6 +44,8 @@ export const EVENT = {
   botCashedOut: "bot_cashed_out",
   crashed: "crashed",
   betPlaced: "bet_placed",
+  betQueued: "bet_queued",
+  betCancelled: "bet_cancelled",
   cashedOut: "cashed_out",
   balance: "balance",
   error: "error",

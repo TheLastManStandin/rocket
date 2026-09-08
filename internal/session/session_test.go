@@ -232,6 +232,84 @@ func TestPlaceBetRefundsWhenTheRoundWillNotTakeIt(t *testing.T) {
 	}
 }
 
+// A stake taken in flight is paid for straight away and waits for the next
+// round, and cancelling it puts the money back.
+func TestBetMadeInFlightIsQueuedAndRefundableUntilItRides(t *testing.T) {
+	cfg := testConfig()
+	// Take off almost at once and then stay up, so the test never races a
+	// burst it did not ask for.
+	cfg.BettingWindow = 20 * time.Millisecond
+	cfg.CrashedPause = 10 * time.Second
+	cfg.DrawCrash = func() game.Multiplier { return 100000 }
+
+	w := newFakeWallet(5000)
+	m := NewManager(cfg, w, nil, nil)
+	defer m.Shutdown()
+
+	s := m.Acquire(1)
+	defer m.Release(1)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	events, unsubscribe, err := s.Subscribe(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unsubscribe()
+	waitFor(ctx, t, events, game.EventTookOff)
+
+	balance, err := s.PlaceBet(ctx, 500)
+	if err != nil {
+		t.Fatalf("betting in flight returned %v", err)
+	}
+	if balance != 4500 {
+		t.Errorf("balance after a queued 500 stake is %d, want 4500", balance)
+	}
+	queued := waitFor(ctx, t, events, game.EventBetQueued)
+	if queued.Amount != 500 || queued.Balance != 4500 {
+		t.Errorf("bet_queued carried %d at balance %d, want 500 at 4500", queued.Amount, queued.Balance)
+	}
+
+	balance, err = s.CancelBet(ctx)
+	if err != nil {
+		t.Fatalf("cancelling returned %v", err)
+	}
+	if balance != 5000 {
+		t.Errorf("balance after cancelling is %d, want the 5000 it started at", balance)
+	}
+	if back := waitFor(ctx, t, events, game.EventBetCancelled); back.Balance != 5000 {
+		t.Errorf("bet_cancelled carried a balance of %d, want 5000", back.Balance)
+	}
+
+	if _, err := s.CancelBet(ctx); !errors.Is(err, game.ErrNoQueuedBet) {
+		t.Errorf("cancelling twice returned %v, want ErrNoQueuedBet", err)
+	}
+
+	want := []string{wallet.ReasonBet, wallet.ReasonRefund}
+	if got := w.reasons(); len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("ledger recorded %v, want %v", got, want)
+	}
+}
+
+// waitFor drains the stream until the named event turns up.
+func waitFor(ctx context.Context, t *testing.T, events <-chan game.Event, typ string) game.Event {
+	t.Helper()
+	for {
+		select {
+		case e, open := <-events:
+			if !open {
+				t.Fatalf("the stream closed before %q arrived", typ)
+			}
+			if e.Type == typ {
+				return e
+			}
+		case <-ctx.Done():
+			t.Fatalf("%q never arrived", typ)
+		}
+	}
+}
+
 func TestPlaceBetRejectsStakesOutsideTheLimitsWithoutTouchingTheWallet(t *testing.T) {
 	w := newFakeWallet(5000)
 	m := NewManager(testConfig(), w, nil, nil)

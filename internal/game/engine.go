@@ -24,6 +24,8 @@ const (
 	EventBotCashedOut = "bot_cashed_out"
 	EventCrashed      = "crashed"
 	EventBetPlaced    = "bet_placed"
+	EventBetQueued    = "bet_queued"
+	EventBetCancelled = "bet_cancelled"
 	EventCashedOut    = "cashed_out"
 	EventBalance      = "balance"
 	EventError        = "error"
@@ -32,6 +34,8 @@ const (
 var (
 	ErrBetsClosed       = errors.New("game: bets are closed for this round")
 	ErrAlreadyBet       = errors.New("game: a bet is already down for this round")
+	ErrAlreadyQueued    = errors.New("game: a bet is already waiting for the next round")
+	ErrNoQueuedBet      = errors.New("game: no bet is waiting for the next round")
 	ErrStakeOutOfRange  = errors.New("game: stake is outside the allowed range")
 	ErrNotFlying        = errors.New("game: the rocket is not in flight")
 	ErrNoBet            = errors.New("game: no bet to cash out")
@@ -82,6 +86,14 @@ type PlayerBet struct {
 
 func (b *PlayerBet) cashedOut() bool { return b != nil && b.CashedOutAt != 0 }
 
+// Placement says which round a stake landed on.
+type Placement int
+
+const (
+	PlacedThisRound Placement = iota
+	QueuedForNext
+)
+
 type Round struct {
 	ID        int64
 	Crash     Multiplier
@@ -98,10 +110,15 @@ type Round struct {
 //
 // It is not safe for concurrent use; Session owns the goroutine that drives it.
 type Game struct {
-	cfg     Config
-	rnd     *rand.Rand
-	nextID  int64
-	round   Round
+	cfg    Config
+	rnd    *rand.Rand
+	nextID int64
+	round  Round
+
+	// queued is a stake taken while the round on screen was already in the air.
+	// It is paid for the moment it is taken, and openRound seats it -- which is
+	// why it lives on the game rather than on the round it was made from.
+	queued  *PlayerBet
 	history []Multiplier
 }
 
@@ -111,9 +128,10 @@ func New(cfg Config, rnd *rand.Rand, now time.Time) *Game {
 	return g
 }
 
-func (g *Game) Phase() Phase    { return g.round.Phase }
-func (g *Game) RoundID() int64  { return g.round.ID }
-func (g *Game) Bet() *PlayerBet { return g.round.Bet }
+func (g *Game) Phase() Phase          { return g.round.Phase }
+func (g *Game) RoundID() int64        { return g.round.ID }
+func (g *Game) Bet() *PlayerBet       { return g.round.Bet }
+func (g *Game) QueuedBet() *PlayerBet { return g.queued }
 
 // Current is what the curve reads right now.
 func (g *Game) Current(now time.Time) Multiplier {
@@ -193,12 +211,27 @@ func (g *Game) openRound(now time.Time) []Event {
 	}
 	// The table opens empty and fills over the countdown; botViews is therefore
 	// empty here by design.
-	return []Event{{
+	out := []Event{{
 		Type:     EventRoundOpened,
 		RoundID:  g.round.ID,
 		Phase:    PhaseBetting,
 		EndsInMS: g.cfg.BettingWindow.Milliseconds(),
 	}}
+
+	// A stake taken while the last round was in the air comes down here. It was
+	// paid for when it was taken, so seating it is bookkeeping and not a wallet
+	// call -- which is what keeps Advance free of I/O. The event carries no
+	// balance for the same reason: nothing moved.
+	if g.queued != nil {
+		g.round.Bet = g.queued
+		g.queued = nil
+		out = append(out, Event{
+			Type:    EventBetPlaced,
+			RoundID: g.round.ID,
+			Amount:  g.round.Bet.Amount,
+		})
+	}
+	return out
 }
 
 // admitBots seats everyone whose arrival time has come. Passing all seats the
@@ -262,22 +295,46 @@ func (g *Game) burst(at time.Time) []Event {
 	}}
 }
 
-// PlaceBet records a stake for the current round.
+// PlaceBet records a stake, on this round if it is still taking them and on the
+// next one otherwise. The Placement says which happened, because a stake that
+// will not ride until the next round has to read as waiting rather than as
+// live.
 //
 // The caller debits the wallet before calling and refunds when this returns an
 // error: money is authoritative in the ledger, and the round may have taken off
 // between the balance check and here.
-func (g *Game) PlaceBet(amount int64) error {
-	switch {
-	case amount < g.cfg.MinBet || amount > g.cfg.MaxBet:
-		return ErrStakeOutOfRange
-	case g.round.Phase != PhaseBetting:
-		return ErrBetsClosed
-	case g.round.Bet != nil:
-		return ErrAlreadyBet
+func (g *Game) PlaceBet(amount int64) (Placement, error) {
+	if amount < g.cfg.MinBet || amount > g.cfg.MaxBet {
+		return 0, ErrStakeOutOfRange
+	}
+
+	// Bets are shut for the round on screen, but there is a next one coming and
+	// no reason to turn the stake away until it opens.
+	if g.round.Phase != PhaseBetting {
+		if g.queued != nil {
+			return 0, ErrAlreadyQueued
+		}
+		g.queued = &PlayerBet{Amount: amount}
+		return QueuedForNext, nil
+	}
+
+	if g.round.Bet != nil {
+		return 0, ErrAlreadyBet
 	}
 	g.round.Bet = &PlayerBet{Amount: amount}
-	return nil
+	return PlacedThisRound, nil
+}
+
+// CancelQueuedBet takes back a stake that has not ridden yet and reports what
+// the caller owes back. A bet on the round in progress is not cancellable:
+// once the rocket is up, the only way out of it is to cash out.
+func (g *Game) CancelQueuedBet() (int64, error) {
+	if g.queued == nil {
+		return 0, ErrNoQueuedBet
+	}
+	amount := g.queued.Amount
+	g.queued = nil
+	return amount, nil
 }
 
 // CashOut settles the player's stake at whatever the curve reads now, which is
@@ -339,6 +396,9 @@ func (g *Game) Snapshot(now time.Time) Event {
 			e.Multiplier, e.Payout = b.CashedOutAt, b.Payout
 		}
 	}
+	if q := g.queued; q != nil {
+		e.QueuedAmount = q.Amount
+	}
 	return e
 }
 
@@ -381,6 +441,10 @@ type Event struct {
 	Payout     int64        `json:"payout,omitempty"`
 	Balance    int64        `json:"balance,omitempty"`
 	History    []Multiplier `json:"history,omitempty"`
+
+	// QueuedAmount rides on a snapshot so a client that reconnects between
+	// rounds still finds the stake it left waiting.
+	QueuedAmount int64 `json:"queuedAmount,omitempty"`
 
 	// Code is a stable identifier for a refusal, so the client owns the
 	// wording; Message is a fallback for anything unmapped.

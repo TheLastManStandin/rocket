@@ -90,32 +90,126 @@ func TestRoundWalksFromBettingThroughFlightToBurst(t *testing.T) {
 	}
 }
 
-func TestBetsOnlyLandDuringTheBettingWindow(t *testing.T) {
+func TestOnlyOneBetLandsPerBettingWindow(t *testing.T) {
 	g := newTestGame(250, epoch)
 
-	if err := g.PlaceBet(5); !errors.Is(err, ErrStakeOutOfRange) {
+	if _, err := g.PlaceBet(5); !errors.Is(err, ErrStakeOutOfRange) {
 		t.Errorf("staking below the minimum returned %v, want ErrStakeOutOfRange", err)
 	}
-	if err := g.PlaceBet(999999); !errors.Is(err, ErrStakeOutOfRange) {
+	if _, err := g.PlaceBet(999999); !errors.Is(err, ErrStakeOutOfRange) {
 		t.Errorf("staking above the maximum returned %v, want ErrStakeOutOfRange", err)
 	}
 
-	if err := g.PlaceBet(500); err != nil {
+	where, err := g.PlaceBet(500)
+	if err != nil {
 		t.Fatalf("a valid bet returned %v", err)
 	}
-	if err := g.PlaceBet(500); !errors.Is(err, ErrAlreadyBet) {
+	if where != PlacedThisRound {
+		t.Errorf("a bet inside the window was %v, want PlacedThisRound", where)
+	}
+	if _, err := g.PlaceBet(500); !errors.Is(err, ErrAlreadyBet) {
 		t.Errorf("betting twice returned %v, want ErrAlreadyBet", err)
 	}
+}
+
+func TestABetMadeInFlightRidesTheNextRound(t *testing.T) {
+	g := newTestGameSeq(epoch, 250, 400)
 
 	g.Advance(epoch.Add(testBetting))
-	if err := g.PlaceBet(500); !errors.Is(err, ErrBetsClosed) {
-		t.Errorf("betting after take-off returned %v, want ErrBetsClosed", err)
+	if g.Phase() != PhaseFlying {
+		t.Fatalf("phase is %q, want %q", g.Phase(), PhaseFlying)
+	}
+
+	where, err := g.PlaceBet(500)
+	if err != nil {
+		t.Fatalf("betting in flight returned %v", err)
+	}
+	if where != QueuedForNext {
+		t.Errorf("a bet made in flight was %v, want QueuedForNext", where)
+	}
+	if g.Bet() != nil {
+		t.Error("the stake was seated on the round already in the air")
+	}
+	if _, err := g.PlaceBet(500); !errors.Is(err, ErrAlreadyQueued) {
+		t.Errorf("queueing twice returned %v, want ErrAlreadyQueued", err)
+	}
+
+	// The queued stake has to survive the burst and land on the round after it.
+	now := epoch.Add(testBetting).Add(TimeToReach(250))
+	g.Advance(now)
+	events := g.Advance(now.Add(testPause))
+	if g.Phase() != PhaseBetting {
+		t.Fatalf("phase is %q after the pause, want %q", g.Phase(), PhaseBetting)
+	}
+	placed := eventsOfType(events, EventBetPlaced)
+	if len(placed) != 1 {
+		t.Fatalf("the new round announced %d bets, want 1", len(placed))
+	}
+	if placed[0].Amount != 500 {
+		t.Errorf("the seated stake is %d, want 500", placed[0].Amount)
+	}
+	// Nothing moved in the ledger here: the stake was paid for when it was
+	// taken, and announcing a balance would have the client show it twice.
+	if placed[0].Balance != 0 {
+		t.Errorf("seating a queued stake reported a balance of %d, want none", placed[0].Balance)
+	}
+	if bet := g.Bet(); bet == nil || bet.Amount != 500 {
+		t.Errorf("the new round holds %+v, want a 500 stake", bet)
+	}
+	if g.QueuedBet() != nil {
+		t.Error("the stake is still queued after being seated")
+	}
+}
+
+func TestCancellingAQueuedBetLeavesNothingToSeat(t *testing.T) {
+	g := newTestGameSeq(epoch, 250, 400)
+	g.Advance(epoch.Add(testBetting))
+
+	if _, err := g.CancelQueuedBet(); !errors.Is(err, ErrNoQueuedBet) {
+		t.Errorf("cancelling nothing returned %v, want ErrNoQueuedBet", err)
+	}
+	if _, err := g.PlaceBet(500); err != nil {
+		t.Fatal(err)
+	}
+
+	amount, err := g.CancelQueuedBet()
+	if err != nil {
+		t.Fatalf("cancelling returned %v", err)
+	}
+	if amount != 500 {
+		t.Errorf("cancelling owes back %d, want 500", amount)
+	}
+
+	now := epoch.Add(testBetting).Add(TimeToReach(250))
+	g.Advance(now)
+	events := g.Advance(now.Add(testPause))
+	if hasEvent(events, EventBetPlaced) {
+		t.Error("a cancelled stake was still seated on the next round")
+	}
+	if g.Bet() != nil {
+		t.Errorf("the new round holds %+v, want no stake", g.Bet())
+	}
+}
+
+func TestSnapshotCarriesAStakeWaitingForTheNextRound(t *testing.T) {
+	g := newTestGame(250, epoch)
+	g.Advance(epoch.Add(testBetting))
+	if _, err := g.PlaceBet(700); err != nil {
+		t.Fatal(err)
+	}
+
+	snap := g.Snapshot(epoch.Add(testBetting + time.Second))
+	if snap.QueuedAmount != 700 {
+		t.Errorf("the snapshot reports %d waiting, want 700", snap.QueuedAmount)
+	}
+	if snap.Amount != 0 {
+		t.Errorf("the snapshot reports a live stake of %d, want none", snap.Amount)
 	}
 }
 
 func TestCashOutPaysTheCurveAtTheInstantItArrives(t *testing.T) {
 	g := newTestGame(500, epoch)
-	if err := g.PlaceBet(1000); err != nil {
+	if _, err := g.PlaceBet(1000); err != nil {
 		t.Fatal(err)
 	}
 
@@ -149,7 +243,7 @@ func TestCashOutPaysTheCurveAtTheInstantItArrives(t *testing.T) {
 // however good the multiplier looked on the player's screen.
 func TestCashOutArrivingAfterTheBurstIsRefused(t *testing.T) {
 	g := newTestGame(150, epoch)
-	if err := g.PlaceBet(1000); err != nil {
+	if _, err := g.PlaceBet(1000); err != nil {
 		t.Fatal(err)
 	}
 	takeoff := epoch.Add(testBetting)
@@ -252,7 +346,7 @@ func TestHistoryKeepsTheLatestRoundsNewestFirst(t *testing.T) {
 
 func TestSnapshotDescribesARoundInFlight(t *testing.T) {
 	g := newTestGame(500, epoch)
-	if err := g.PlaceBet(750); err != nil {
+	if _, err := g.PlaceBet(750); err != nil {
 		t.Fatal(err)
 	}
 
@@ -286,7 +380,7 @@ func TestSnapshotDescribesARoundInFlight(t *testing.T) {
 // step with the clock, rather than wedging or replaying forever.
 func TestAdvanceCatchesUpAfterAStall(t *testing.T) {
 	g := newTestGame(200, epoch)
-	if err := g.PlaceBet(500); err != nil {
+	if _, err := g.PlaceBet(500); err != nil {
 		t.Fatal(err)
 	}
 

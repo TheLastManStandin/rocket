@@ -94,30 +94,44 @@ func TestEveryPlayerLandsOnTheSameTable(t *testing.T) {
 	}
 }
 
-func TestSessionSurvivesAReconnectInsideTheGracePeriod(t *testing.T) {
+// The table deals whether or not anybody is watching, so a disconnect costs
+// nothing and a round runs on through an empty room.
+func TestTableDealsOnWithNobodyWatching(t *testing.T) {
 	m := NewManager(testConfig(), newFakeWallet(5000), nil, nil)
 	defer m.Shutdown()
-	m.grace = 300 * time.Millisecond
 
 	first := m.Acquire()
 	m.Release()
+	if got := m.Online(); got != 0 {
+		t.Errorf("Online() = %d after the last player left, want 0", got)
+	}
 
-	// Back before the grace period runs out: same table, same round.
+	// Nobody is watching, and the round is still running: it answers, and it
+	// is the same round it was before.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	before := roundOf(ctx, t, first)
 	time.Sleep(50 * time.Millisecond)
-	resumed := m.Acquire()
-	if resumed != first {
-		t.Fatal("reconnecting inside the grace period started a fresh table")
-	}
 
-	m.Release()
-	deadline := time.After(2 * time.Second)
-	for m.Running() {
-		select {
-		case <-deadline:
-			t.Fatal("the table was never torn down after the grace period")
-		case <-time.After(20 * time.Millisecond):
-		}
+	resumed := m.Acquire()
+	defer m.Release()
+	if resumed != first {
+		t.Fatal("reconnecting landed on a different table")
 	}
+	if got := roundOf(ctx, t, resumed); got != before {
+		t.Errorf("the round changed from %d to %d over an empty room", before, got)
+	}
+}
+
+// roundOf asks the table which round it is on.
+func roundOf(ctx context.Context, t *testing.T, s *Session) int64 {
+	t.Helper()
+	var id int64
+	if err := s.do(ctx, func(g *game.Game, _ time.Time) { id = g.RoundID() }); err != nil {
+		t.Fatalf("the table stopped answering: %v", err)
+	}
+	return id
 }
 
 func TestSubscribeOpensWithASnapshot(t *testing.T) {
@@ -342,16 +356,18 @@ func TestCashOutBeforeTakeOffIsRefused(t *testing.T) {
 
 func TestClosedSessionStopsServingCommands(t *testing.T) {
 	m := NewManager(testConfig(), newFakeWallet(5000), nil, nil)
-	m.grace = 10 * time.Millisecond
-
 	s := m.Acquire()
-	m.Release()
 
+	// Only the server going down closes the table.
+	m.Shutdown()
 	deadline := time.After(2 * time.Second)
-	for m.Running() {
+	for {
+		if _, err := s.PlaceBet(context.Background(), alice, 500); errors.Is(err, ErrSessionClosed) {
+			break
+		}
 		select {
 		case <-deadline:
-			t.Fatal("the table never shut down")
+			t.Fatal("the table kept taking bets after shutdown")
 		case <-time.After(5 * time.Millisecond):
 		}
 	}

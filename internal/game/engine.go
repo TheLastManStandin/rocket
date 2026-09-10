@@ -25,7 +25,6 @@ const (
 	EventCrashed      = "crashed"
 	EventBetPlaced    = "bet_placed"
 	EventBetQueued    = "bet_queued"
-	EventBetCancelled = "bet_cancelled"
 	EventCashedOut    = "cashed_out"
 	EventBalance      = "balance"
 	EventError        = "error"
@@ -35,7 +34,6 @@ var (
 	ErrBetsClosed       = errors.New("game: bets are closed for this round")
 	ErrAlreadyBet       = errors.New("game: a bet is already down for this round")
 	ErrAlreadyQueued    = errors.New("game: a bet is already waiting for the next round")
-	ErrNoQueuedBet      = errors.New("game: no bet is waiting for the next round")
 	ErrStakeOutOfRange  = errors.New("game: stake is outside the allowed range")
 	ErrNotFlying        = errors.New("game: the rocket is not in flight")
 	ErrNoBet            = errors.New("game: no bet to cash out")
@@ -323,18 +321,6 @@ func (g *Game) PlaceBet(amount int64) (Placement, error) {
 	}
 	g.round.Bet = &PlayerBet{Amount: amount}
 	return PlacedThisRound, nil
-}
-
-// CancelQueuedBet takes back a stake that has not ridden yet and reports what
-// the caller owes back. A bet on the round in progress is not cancellable:
-// once the rocket is up, the only way out of it is to cash out.
-func (g *Game) CancelQueuedBet() (int64, error) {
-	if g.queued == nil {
-		return 0, ErrNoQueuedBet
-	}
-	amount := g.queued.Amount
-	g.queued = nil
-	return amount, nil
 }
 
 // CashOut settles the player's stake at whatever the curve reads now, which is

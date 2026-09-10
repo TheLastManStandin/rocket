@@ -161,36 +161,6 @@ func TestABetMadeInFlightRidesTheNextRound(t *testing.T) {
 	}
 }
 
-func TestCancellingAQueuedBetLeavesNothingToSeat(t *testing.T) {
-	g := newTestGameSeq(epoch, 250, 400)
-	g.Advance(epoch.Add(testBetting))
-
-	if _, err := g.CancelQueuedBet(); !errors.Is(err, ErrNoQueuedBet) {
-		t.Errorf("cancelling nothing returned %v, want ErrNoQueuedBet", err)
-	}
-	if _, err := g.PlaceBet(500); err != nil {
-		t.Fatal(err)
-	}
-
-	amount, err := g.CancelQueuedBet()
-	if err != nil {
-		t.Fatalf("cancelling returned %v", err)
-	}
-	if amount != 500 {
-		t.Errorf("cancelling owes back %d, want 500", amount)
-	}
-
-	now := epoch.Add(testBetting).Add(TimeToReach(250))
-	g.Advance(now)
-	events := g.Advance(now.Add(testPause))
-	if hasEvent(events, EventBetPlaced) {
-		t.Error("a cancelled stake was still seated on the next round")
-	}
-	if g.Bet() != nil {
-		t.Errorf("the new round holds %+v, want no stake", g.Bet())
-	}
-}
-
 func TestSnapshotCarriesAStakeWaitingForTheNextRound(t *testing.T) {
 	g := newTestGame(250, epoch)
 	g.Advance(epoch.Add(testBetting))

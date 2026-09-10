@@ -49,7 +49,6 @@ const REFUSALS: Record<string, string> = {
   bets_closed: "Ставки на этот раунд уже закрыты",
   already_bet: "Ставка на этот раунд уже сделана",
   already_queued: "Ставка на следующий раунд уже сделана",
-  no_queued_bet: "Отменять нечего",
   stake_out_of_range: "Такая сумма недоступна",
   not_flying: "Не успели — ракета уже взорвалась",
   no_bet: "Ставка не сделана",
@@ -77,7 +76,6 @@ export function useCrashGame(token: string | null) {
 
   const bet = useCallback((amount: number) => send({ type: "bet", amount }), [send]);
   const cashOut = useCallback(() => send({ type: "cashout" }), [send]);
-  const cancelBet = useCallback(() => send({ type: "cancel_bet" }), [send]);
 
   useEffect(() => {
     if (!token) return;
@@ -140,7 +138,7 @@ export function useCrashGame(token: string | null) {
     return () => cancelAnimationFrame(frame);
   }, [state.phase]);
 
-  return { state, bet, cashOut, cancelBet };
+  return { state, bet, cashOut };
 }
 
 function reduce(
@@ -247,9 +245,6 @@ function reduce(
         balance: e.balance ?? s.balance,
         error: null,
       };
-
-    case EVENT.betCancelled:
-      return { ...s, queued: null, balance: e.balance ?? s.balance };
 
     case EVENT.cashedOut:
       return {

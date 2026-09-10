@@ -126,11 +126,6 @@ body {
   height: 16px;
 }
 
-.star--action {
-  width: 20px;
-  height: 20px;
-}
-
 .star--amount {
   width: 40px;
   height: 40px;
@@ -297,20 +292,6 @@ body {
 
 .action--cash {
   background: linear-gradient(90deg, var(--green-a), var(--green-b));
-}
-
-/* Taking a waiting stake back is not the move the board is pushing, so it
-   reads as a way out rather than as the next step forward. */
-.action--cancel {
-  background: var(--sheet-field);
-  color: var(--destructive);
-}
-
-.action-amount {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-variant-numeric: tabular-nums;
 }
 
 .action:active:not(:disabled) {

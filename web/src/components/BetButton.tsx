@@ -1,8 +1,5 @@
-import type { ReactNode } from "react";
-
 import { haptic } from "../lib/telegram";
 import type { Phase, PlayerBet } from "../lib/types";
-import { Star } from "./Star";
 
 interface Props {
   phase: Phase;
@@ -12,75 +9,46 @@ interface Props {
   connected: boolean;
   /** Opens the betting menu, for this round or the next one. */
   onOpen: () => void;
-  onCancel: () => void;
   onCashOut: () => void;
 }
 
 /**
- * The one control on the board. Which of the four things it is doing is
- * decided here rather than by the caller: opening the menu, cashing out,
- * taking a waiting stake back, or saying what the round is doing.
+ * The one control on the board, and one way of putting a stake down: the menu
+ * opens whatever the round is doing, and where the stake lands -- this round
+ * or the next -- is the server's business, not something the player picks.
+ * Once it is down it stays down.
  */
-export function BetButton({ phase, bet, queued, connected, onOpen, onCancel, onCashOut }: Props) {
+export function BetButton({ phase, bet, queued, connected, onOpen, onCashOut }: Props) {
   const riding = bet !== null && bet.cashedOutAt === undefined;
   const betsOpen = phase === "betting";
+  // A stake on whichever round the menu would have taken one for.
+  const staked = betsOpen ? bet !== null : queued !== null;
 
   const canCashOut = phase === "flying" && riding && connected;
-  // While the rocket is up the menu takes bets on the round after it, so the
-  // button stays live for the whole cycle rather than only in the window.
-  const canOpen = connected && !canCashOut && (betsOpen ? bet === null : queued === null);
-  const canCancel = connected && !betsOpen && queued !== null;
+  const canOpen = connected && !canCashOut && !staked;
 
   const press = () => {
     haptic("tap");
     if (canCashOut) onCashOut();
-    else if (canCancel) onCancel();
     else if (canOpen) onOpen();
   };
 
   return (
     <button
       type="button"
-      className={className(canCashOut, canCancel)}
-      disabled={!canCashOut && !canCancel && !canOpen}
+      className={canCashOut ? "action action--cash" : "action"}
+      disabled={!canCashOut && !canOpen}
       onClick={press}
     >
-      {label({ phase, bet, queued, connected, riding, betsOpen })}
+      {label({ canCashOut, connected, staked })}
     </button>
   );
 }
 
-function className(cashing: boolean, cancelling: boolean): string {
-  if (cashing) return "action action--cash";
-  if (cancelling) return "action action--cancel";
-  return "action";
-}
-
-function label(args: {
-  phase: Phase;
-  bet: PlayerBet | null;
-  queued: number | null;
-  connected: boolean;
-  riding: boolean;
-  betsOpen: boolean;
-}): ReactNode {
-  const { phase, bet, queued, connected, riding, betsOpen } = args;
+function label(args: { canCashOut: boolean; connected: boolean; staked: boolean }): string {
+  const { canCashOut, connected, staked } = args;
 
   if (!connected) return "Соединение...";
-  if (phase === "flying" && riding) return "Забрать";
-
-  if (betsOpen) return bet ? "Ставка принята" : "Сделать ставку";
-
-  if (queued !== null) {
-    return (
-      <>
-        Отменить
-        <span className="action-amount">
-          <Star className="star--action" />
-          {queued}
-        </span>
-      </>
-    );
-  }
-  return "Ставка на следующий раунд";
+  if (canCashOut) return "Забрать";
+  return staked ? "Ставка принята" : "Сделать ставку";
 }

@@ -206,36 +206,6 @@ func (s *Session) PlaceBet(ctx context.Context, amount int64) (int64, error) {
 	return balance, nil
 }
 
-// CancelBet takes back a stake that is still waiting for the next round.
-//
-// The stake leaves the game before the refund goes out. The other order would
-// let the round open in between and seat a bet that has already been paid
-// back.
-func (s *Session) CancelBet(ctx context.Context) (int64, error) {
-	var (
-		amount  int64
-		removed error
-	)
-	if err := s.do(ctx, func(g *game.Game, _ time.Time) {
-		amount, removed = g.CancelQueuedBet()
-	}); err != nil {
-		return 0, err
-	}
-	if removed != nil {
-		return 0, removed
-	}
-
-	balance, err := s.wallet.Credit(ctx, s.userID, amount, wallet.ReasonRefund, fmt.Sprintf("user:%d", s.userID))
-	if err != nil {
-		// The stake is already out of the game, so the ledger is what owes the
-		// player; say so rather than pretending it came back.
-		return 0, fmt.Errorf("session: refunding a cancelled bet: %w", err)
-	}
-
-	s.broadcast([]game.Event{{Type: game.EventBetCancelled, Balance: balance}})
-	return balance, nil
-}
-
 // CashOut settles at the curve as the server reads it when the request lands,
 // never at a multiplier the client claims to be showing.
 func (s *Session) CashOut(ctx context.Context) (game.Multiplier, int64, int64, error) {

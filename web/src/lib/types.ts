@@ -45,7 +45,6 @@ export const EVENT = {
   crashed: "crashed",
   betPlaced: "bet_placed",
   betQueued: "bet_queued",
-  betCancelled: "bet_cancelled",
   cashedOut: "cashed_out",
   balance: "balance",
   error: "error",

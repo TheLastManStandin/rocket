@@ -233,8 +233,8 @@ func TestPlaceBetRefundsWhenTheRoundWillNotTakeIt(t *testing.T) {
 }
 
 // A stake taken in flight is paid for straight away and waits for the next
-// round, and cancelling it puts the money back.
-func TestBetMadeInFlightIsQueuedAndRefundableUntilItRides(t *testing.T) {
+// round rather than being turned away.
+func TestBetMadeInFlightIsQueuedForTheNextRound(t *testing.T) {
 	cfg := testConfig()
 	// Take off almost at once and then stay up, so the test never races a
 	// burst it did not ask for.
@@ -271,23 +271,14 @@ func TestBetMadeInFlightIsQueuedAndRefundableUntilItRides(t *testing.T) {
 		t.Errorf("bet_queued carried %d at balance %d, want 500 at 4500", queued.Amount, queued.Balance)
 	}
 
-	balance, err = s.CancelBet(ctx)
-	if err != nil {
-		t.Fatalf("cancelling returned %v", err)
-	}
-	if balance != 5000 {
-		t.Errorf("balance after cancelling is %d, want the 5000 it started at", balance)
-	}
-	if back := waitFor(ctx, t, events, game.EventBetCancelled); back.Balance != 5000 {
-		t.Errorf("bet_cancelled carried a balance of %d, want 5000", back.Balance)
+	if _, err := s.PlaceBet(ctx, 500); !errors.Is(err, game.ErrAlreadyQueued) {
+		t.Errorf("queueing twice returned %v, want ErrAlreadyQueued", err)
 	}
 
-	if _, err := s.CancelBet(ctx); !errors.Is(err, game.ErrNoQueuedBet) {
-		t.Errorf("cancelling twice returned %v, want ErrNoQueuedBet", err)
-	}
-
-	want := []string{wallet.ReasonBet, wallet.ReasonRefund}
-	if got := w.reasons(); len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+	// The refused second stake is the only thing that comes back; the first is
+	// down for the next round and stays down.
+	want := []string{wallet.ReasonBet, wallet.ReasonBet, wallet.ReasonRefund}
+	if got := w.reasons(); len(got) != len(want) {
 		t.Errorf("ledger recorded %v, want %v", got, want)
 	}
 }

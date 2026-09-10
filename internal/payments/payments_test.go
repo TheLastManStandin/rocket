@@ -112,23 +112,23 @@ func TestInvoiceCarriesThePlayerItWasCutFor(t *testing.T) {
 	api := &fakeAPI{link: "https://t.me/invoice"}
 	s := newService(api, fakeStore{}, newWallet(), &fakeNotifier{})
 
-	link, err := s.InvoiceLink(context.Background(), 42, 250)
+	link, err := s.InvoiceLink(context.Background(), 42, 500)
 	if err != nil {
 		t.Fatalf("InvoiceLink: %v", err)
 	}
 	if link != "https://t.me/invoice" {
 		t.Errorf("link = %q", link)
 	}
-	if api.invoice.Stars != 250 {
-		t.Errorf("stars = %d, want 250", api.invoice.Stars)
+	if api.invoice.Stars != 500 {
+		t.Errorf("stars = %d, want 500", api.invoice.Stars)
 	}
 
 	userID, stars, err := parsePayload(api.invoice.Payload)
 	if err != nil {
 		t.Fatalf("the payload it wrote does not parse back: %v", err)
 	}
-	if userID != 42 || stars != 250 {
-		t.Errorf("payload carries user %d and %d stars, want 42 and 250", userID, stars)
+	if userID != 42 || stars != 500 {
+		t.Errorf("payload carries user %d and %d stars, want 42 and 500", userID, stars)
 	}
 }
 

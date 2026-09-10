@@ -20,9 +20,7 @@ import (
 
 // Packages are the amounts a player may buy. Offering a fixed set rather than
 // a free-form number keeps a crafted request from inventing its own price.
-// The single Star at the front is there to make the payment path testable
-// without spending anything worth spending.
-var Packages = []int64{1, 100, 250, 500, 1000}
+var Packages = []int64{100, 500, 1000, 2500, 5000, 10000, 50000}
 
 // How long each long poll waits before Telegram answers empty-handed. Long
 // enough that the loop is idle almost all of the time, short enough that a

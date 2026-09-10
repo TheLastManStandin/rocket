@@ -53,14 +53,14 @@ const HOVER_X = 0.818;
 const HOVER_Y = 0.35;
 
 /** Footprint reserved for the carrot-and-bunny clip riding the curve's tip. */
-const CARROT_SIZE = 150;
+const CARROT_SIZE = 195;
 /** The burst clip needs more room than the carrot: it expands well past it. */
 const BURST_SIZE = 240;
 
 /** The retro grid's band: how far above the board it starts, and how deep. */
 const GRID_RISE = 112;
 /** Seconds the grid takes to bring one row forward. Lower is faster. */
-const GRID_PERIOD = 3.5;
+const GRID_PERIOD = 1.2;
 /**
  * The shape of one cell. ROW_RATIO is how much closer to the horizon each row
  * sits than the one in front of it, so lowering it spaces the rows out;
@@ -69,8 +69,16 @@ const GRID_PERIOD = 3.5;
  */
 const ROW_RATIO = 0.62;
 const COLUMN_SPREAD = 0.3;
-/** Columns drawn either side of the vanishing point. */
-const COLUMNS = 4;
+/**
+ * How shallow a row still has to be crossed by columns, as a fraction of the
+ * plane's depth. Rows span the whole screen, but the fan of columns only
+ * reaches the edges at the front of the plane -- too narrow a fan and the far
+ * rows run out past the last column and carry on as bare horizontal lines.
+ * The column count is worked out from this and the width.
+ */
+const COLUMN_REACH = 0.06;
+/** However wide the screen, never draw more columns than this per side. */
+const MAX_COLUMNS = 48;
 /**
  * The last slice of the plane's depth, as a fraction of it, over which rows
  * dissolve into the dark. Rows crowd together without bound as they approach
@@ -179,6 +187,10 @@ export function CrashCanvas({ phase, multiplier, phaseEndsAt }: Props) {
     // apart -- driving the climb off it directly is a clip that jerks from
     // step to step however smoothly it is eased.
     let flightStart: number | null = null;
+    // The plane's own clock. It only runs while a round is in the air, so the
+    // grid comes to a stop under the burst instead of carrying on as though
+    // nothing had happened.
+    let gridTime = 0;
     let prevPhase: Phase | null = null;
     let burstStart: number | null = null;
     let numberSince: number | null = null;
@@ -218,7 +230,7 @@ export function CrashCanvas({ phase, multiplier, phaseEndsAt }: Props) {
       tip.x = board.x + board.w * START_X;
       tip.y = board.y + board.h * START_Y;
 
-      carrotSize = Math.min(CARROT_SIZE, board.w * 0.44);
+      carrotSize = Math.min(CARROT_SIZE, board.w * 0.57);
       const burstSize = Math.min(BURST_SIZE, board.w * 0.7);
       carrotEl.style.width = `${carrotSize}px`;
       carrotEl.style.height = `${carrotSize}px`;
@@ -244,6 +256,7 @@ export function CrashCanvas({ phase, multiplier, phaseEndsAt }: Props) {
       const state = latest.current;
 
       sparkTravel += step * (state.phase === "flying" ? SPARK_FLYING : SPARK_WAITING);
+      if (state.phase === "flying") gridTime += step;
 
       if (state.phase === "flying") {
         // Anchor on the first frame of a flight, and after that only when the
@@ -288,7 +301,21 @@ export function CrashCanvas({ phase, multiplier, phaseEndsAt }: Props) {
       if (!showNumber) numberSince = null;
       const numberAge = numberSince !== null ? elapsed - numberSince : null;
 
-      draw(ctx, width, height, board, state, sparks, sparkTravel, flown, elapsed, tip, carrotSize, numberAge);
+      draw(
+        ctx,
+        width,
+        height,
+        board,
+        state,
+        sparks,
+        sparkTravel,
+        gridTime,
+        flown,
+        elapsed,
+        tip,
+        carrotSize,
+        numberAge,
+      );
 
       // After the draw, not before it: the curve is what works out where the
       // tip is this frame, and reading it beforehand leaves the clip a frame
@@ -347,6 +374,7 @@ function draw(
   state: Board,
   sparks: Spark[],
   sparkTravel: number,
+  gridTime: number,
   flown: number,
   elapsed: number,
   tip: { x: number; y: number },
@@ -367,7 +395,7 @@ function draw(
   // The grid is up for as long as a round is on, burst and all; only the trail
   // goes with the carrot, which is why the reference board reads as empty space
   // again the moment the round settles.
-  if (state.phase !== "betting") drawGrid(ctx, width, board, elapsed);
+  if (state.phase !== "betting") drawGrid(ctx, width, board, gridTime);
   if (state.phase === "flying") {
     drawCurve(ctx, board, flown, tip, carrotSize, elapsed);
   }
@@ -420,7 +448,7 @@ function drawSparks(
  * screen rather than stopping at the board, which is what makes the board read
  * as a window onto something bigger.
  */
-function drawGrid(ctx: CanvasRenderingContext2D, width: number, board: Box, elapsed: number) {
+function drawGrid(ctx: CanvasRenderingContext2D, width: number, board: Box, gridTime: number) {
   const horizon = board.y + board.h * 0.08;
   const back = board.y - GRID_RISE + 400;
   const depth = back - horizon;
@@ -433,7 +461,8 @@ function drawGrid(ctx: CanvasRenderingContext2D, width: number, board: Box, elap
   const front = depth * 0.74;
   const vanishX = width / 2;
   const spread = width * COLUMN_SPREAD;
-  const scroll = (elapsed / GRID_PERIOD) % 1;
+  const scroll = (gridTime / GRID_PERIOD) % 1;
+  const columns = Math.min(MAX_COLUMNS, Math.ceil(width / (2 * spread * COLUMN_REACH)));
 
   ctx.save();
   ctx.beginPath();
@@ -446,12 +475,12 @@ function drawGrid(ctx: CanvasRenderingContext2D, width: number, board: Box, elap
   // at both ends: solid to the apex they would converge into a sunburst the
   // reference board does not have, solid to the front they would outshine the
   // rows they are supposed to sit under.
-  const columns = ctx.createLinearGradient(0, horizon, 0, horizon + front);
-  columns.addColorStop(0, "rgba(128, 128, 128, 0)");
-  columns.addColorStop(0.5, `rgba(128, 128, 128, ${GRID_COLUMN_ALPHA})`);
-  columns.addColorStop(1, "rgba(128, 128, 128, 0)");
-  ctx.strokeStyle = columns;
-  for (let j = -COLUMNS; j <= COLUMNS; j++) {
+  const columnFade = ctx.createLinearGradient(0, horizon, 0, horizon + front);
+  columnFade.addColorStop(0, "rgba(128, 128, 128, 0)");
+  columnFade.addColorStop(0.5, `rgba(128, 128, 128, ${GRID_COLUMN_ALPHA})`);
+  columnFade.addColorStop(1, "rgba(128, 128, 128, 0)");
+  ctx.strokeStyle = columnFade;
+  for (let j = -columns; j <= columns; j++) {
     ctx.beginPath();
     ctx.moveTo(vanishX, horizon);
     ctx.lineTo(vanishX + j * spread, horizon + front);
@@ -480,7 +509,7 @@ function drawGrid(ctx: CanvasRenderingContext2D, width: number, board: Box, elap
     // A dot on every crossing, shrinking with the row it sits on.
     const radius = Math.max(0.5, 2.4 * reach);
     ctx.fillStyle = `rgba(255, 255, 255, ${GRID_DOT_ALPHA * fade})`;
-    for (let j = -COLUMNS; j <= COLUMNS; j++) {
+    for (let j = -columns; j <= columns; j++) {
       const x = vanishX + j * spread * reach;
       ctx.beginPath();
       ctx.arc(x, y, radius, 0, Math.PI * 2);

@@ -33,7 +33,7 @@ const CRASH = "255, 48, 100";
  * few seconds and then hovers in the top right for the rest of the round --
  * the number, not the curve, is what carries a long flight.
  */
-const RISE_SECONDS = 3;
+const RISE_SECONDS = 2;
 /**
  * How far the render loop's flight clock may sit from the multiplier in state
  * before it is reset to it, in seconds. Below this the gap is the quantising
@@ -47,10 +47,20 @@ const RE_ANCHOR = 0.3;
  * fast half of it hides the flight and leaves the clip appearing halfway up.
  */
 const FADE_IN = 0.25;
+/** Vertical anchor of the number and the countdown inside the board. */
+const NUMBER_Y = 0.452;
+
 const START_X = 0.109;
 const START_Y = 0.9;
-const HOVER_X = 0.818;
-const HOVER_Y = 0.35;
+const HOVER_X = 0.75;
+/** The clip comes to rest level with the number, so pin it to the same line. */
+const HOVER_Y = NUMBER_Y;
+/**
+ * How far the clip drifts around the hover point once it gets there, in
+ * pixels either side. It never sits perfectly still on the reference board.
+ */
+const HOVER_SWAY_X = 10.5;
+const HOVER_SWAY_Y = 7.5;
 
 /** Footprint reserved for the carrot-and-bunny clip riding the curve's tip. */
 const CARROT_SIZE = 195;
@@ -126,9 +136,6 @@ const BURST_LEN = (BURST_FRAME_END - BURST_FRAME_START) / BURST_FPS;
  * swaps between states, rather than snapping straight in.
  */
 const POP_IN = 0.3;
-
-/** Vertical anchor of the number and the countdown inside the board. */
-const NUMBER_Y = 0.452;
 
 interface Box {
   x: number;
@@ -546,9 +553,11 @@ function drawCurve(
   // pixels at the exact moment the clip is meant to be settling.
   const hover = climb * climb;
   const tipX =
-    board.w * (START_X + (HOVER_X - START_X) * eased) + hover * Math.sin(elapsed * 1.1) * 7;
+    board.w * (START_X + (HOVER_X - START_X) * eased) +
+    hover * Math.sin(elapsed * 1.1) * HOVER_SWAY_X;
   const tipY =
-    board.h * (START_Y - (START_Y - HOVER_Y) * eased) + hover * Math.sin(elapsed * 0.8) * 5;
+    board.h * (START_Y - (START_Y - HOVER_Y) * eased) +
+    hover * Math.sin(elapsed * 0.8) * HOVER_SWAY_Y;
 
   const originX = 0;
   const originY = board.h - 2;

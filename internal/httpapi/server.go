@@ -89,7 +89,13 @@ type authResponse struct {
 	// The amounts the top-up sheet may offer. Sent with the sign-in rather
 	// than fetched separately so the client cannot invent its own.
 	StarPackages []int64 `json:"starPackages"`
-	User         struct {
+	// PlayerID is the seat, not the person: it is what the socket stamps on
+	// every bet and cash-out the table sees, and the only way a client can
+	// pick its own stake out of the broadcast. User.ID below is the Telegram
+	// id, which the table never uses -- the two are different numbers and
+	// must not be swapped for one another.
+	PlayerID int64 `json:"playerId"`
+	User     struct {
 		ID        int64  `json:"id"`
 		Username  string `json:"username"`
 		FirstName string `json:"firstName"`
@@ -135,6 +141,7 @@ func (d Deps) handleTelegramAuth(w http.ResponseWriter, r *http.Request) {
 	if d.Payments != nil {
 		resp.StarPackages = payments.Packages
 	}
+	resp.PlayerID = user.ID
 	resp.User.ID = user.TgID
 	resp.User.Username = user.Username
 	resp.User.FirstName = user.FirstName

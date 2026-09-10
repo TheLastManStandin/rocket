@@ -84,6 +84,12 @@ export interface AuthResponse {
   };
   /** Amounts the top-up sheet may offer. Empty when the server sells no Stars. */
   starPackages?: number[];
+  /**
+   * The seat at the table, which is what every bet and cash-out on the socket
+   * is stamped with. `user.id` below is the Telegram id and matches nothing on
+   * the table -- identifying yourself with it loses your own stake.
+   */
+  playerId: number;
   user: {
     id: number;
     username: string;

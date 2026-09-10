@@ -28,7 +28,7 @@ export function App() {
       .catch((err: Error) => setFailure(err.message));
   }, []);
 
-  const { state, bet, cashOut } = useCrashGame(account?.token ?? null, account?.user.id ?? 0);
+  const { state, bet, cashOut } = useCrashGame(account?.token ?? null, account?.playerId ?? 0);
 
   // The balance the socket reports wins once it has said anything; the auth
   // response only seeds the very first paint.

@@ -184,6 +184,35 @@ func TestSignInAcceptsGenuineInitData(t *testing.T) {
 	}
 }
 
+// The sign-in has to hand back the id the player will wear at the table, and
+// that is the row id, not the Telegram one. Every bet_placed and cashed_out
+// the socket broadcasts carries the row id, so a client holding the Telegram
+// id never recognises its own stake among them -- and a stake it cannot see is
+// a stake it will not offer to cash out.
+func TestSignInHandsBackTheIDTheTableSeatsYouUnder(t *testing.T) {
+	srv, issuer := newServer(t, false)
+
+	const tgID = -424243
+	resp := signIn(t, srv, freshInitData(t, tgID, botToken))
+	defer resp.Body.Close()
+
+	var out struct {
+		Token    string `json:"token"`
+		PlayerID int64  `json:"playerId"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+
+	claims, err := issuer.Parse(out.Token, time.Now())
+	if err != nil {
+		t.Fatalf("the issued token did not parse: %v", err)
+	}
+	if out.PlayerID != claims.UserID {
+		t.Errorf("signed in as player %d, but the socket seats %d", out.PlayerID, claims.UserID)
+	}
+}
+
 func TestSignInRefusesAnythingUnsigned(t *testing.T) {
 	srv, _ := newServer(t, false)
 

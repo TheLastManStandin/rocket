@@ -13,7 +13,8 @@ interface Props {
 }
 
 interface Spark {
-  /** Fractions of the stage, so a resize never respawns the field. */
+  /** Fractions of whichever box the field is filling, so a resize -- or the
+   *  field pulling back into the board -- never respawns it. */
   x: number;
   y: number;
   size: number;
@@ -33,8 +34,12 @@ const CRASH = "255, 48, 100";
  * the number, not the curve, is what carries a long flight.
  */
 const RISE_SECONDS = 2.4;
-/** How long the trail and the clip take to fade up out of the take-off. */
-const FADE_IN = 0.6;
+/**
+ * How long the trail and the clip take to fade up out of the take-off. Keep it
+ * short: the climb is the thing worth watching, and a fade that outlasts the
+ * fast half of it hides the flight and leaves the clip appearing halfway up.
+ */
+const FADE_IN = 0.25;
 const START_X = 0.109;
 const START_Y = 0.9;
 const HOVER_X = 0.818;
@@ -47,21 +52,39 @@ const BURST_SIZE = 240;
 
 /** The retro grid's band: how far above the board it starts, and how deep. */
 const GRID_RISE = 112;
-/** Seconds the grid takes to crawl one row forward. Lower is faster. */
-const GRID_PERIOD = 2.4;
-/** How much closer together each row sits than the one in front of it. */
-const ROW_RATIO = 0.7;
+/** Seconds the grid takes to bring one row forward. Lower is faster. */
+const GRID_PERIOD = 3.5;
+/**
+ * The shape of one cell. ROW_RATIO is how much closer to the horizon each row
+ * sits than the one in front of it, so lowering it spaces the rows out;
+ * COLUMN_SPREAD is the gap between columns at the front of the plane, as a
+ * fraction of the stage width. Between them they are the cell size.
+ */
+const ROW_RATIO = 0.62;
+const COLUMN_SPREAD = 0.3;
+/** Columns drawn either side of the vanishing point. */
+const COLUMNS = 4;
+/**
+ * The last slice of the plane's depth, as a fraction of it, over which rows
+ * dissolve into the dark. Rows crowd together without bound as they approach
+ * the horizon and left alone they merge into a hard bright line where the
+ * plane ends -- this is only wide enough to swallow that line.
+ */
+const GRID_HAZE = 0.12;
 
 /**
- * The sparkle field drifting down the stage. One square of stage per sparkle
- * for DENSITY, glyph sizes from MIN up to MIN + SPREAD, and the fall in pixels
- * a second between DRIFT and DRIFT + DRIFT_SPREAD.
+ * The sparkle field. One square of box per sparkle for DENSITY, glyph sizes
+ * from MIN up to MIN + SPREAD, and the fall in pixels a second between DRIFT
+ * and DRIFT + DRIFT_SPREAD -- multiplied by FLYING while a round is in the air
+ * and by WAITING while the next one is being set up.
  */
 const SPARK_DENSITY = 6500;
 const SPARK_MIN_SIZE = 4;
 const SPARK_SIZE_SPREAD = 12;
 const SPARK_MIN_DRIFT = 9;
 const SPARK_DRIFT_SPREAD = 17;
+const SPARK_FLYING = 5;
+const SPARK_WAITING = 0.5;
 
 /**
  * crash-anim.json runs 180 frames at 60fps (3s) top to bottom, but its first
@@ -131,6 +154,11 @@ export function CrashCanvas({ phase, multiplier, phaseEndsAt }: Props) {
     // Where the carrot last sat, in page coordinates. Flying is the only phase
     // that updates it.
     const tip = { x: 0, y: 0 };
+    // How far the sparkle field has fallen, in drift-seconds. Accumulating the
+    // distance rather than multiplying the clock means the round can change
+    // the rate without the whole field jumping to a new offset.
+    let sparkTravel = 0;
+    let lastFrame = performance.now();
     let prevPhase: Phase | null = null;
     let burstStart: number | null = null;
     let numberSince: number | null = null;
@@ -187,18 +215,25 @@ export function CrashCanvas({ phase, multiplier, phaseEndsAt }: Props) {
     const start = performance.now();
 
     const render = () => {
-      const elapsed = (performance.now() - start) / 1000;
+      const now = performance.now();
+      const elapsed = (now - start) / 1000;
+      // Clamped, so coming back to a backgrounded tab does not fling the
+      // sparkle field a minute down the screen in one frame.
+      const step = Math.min(0.1, (now - lastFrame) / 1000);
+      lastFrame = now;
       const state = latest.current;
 
-      if (state.phase === "flying" && prevPhase !== "flying") carrotAnim.play();
-      if (state.phase !== "flying" && prevPhase === "flying") carrotAnim.stop();
-      carrotEl.style.visibility = state.phase === "flying" ? "visible" : "hidden";
-      if (state.phase === "flying") {
-        // The clips live inside the board, the tip is in stage coordinates.
-        carrotEl.style.left = `${tip.x - board.x}px`;
-        carrotEl.style.top = `${tip.y - board.y}px`;
-        carrotEl.style.opacity = String(fadeIn(state.multiplier));
+      sparkTravel += step * (state.phase === "flying" ? SPARK_FLYING : SPARK_WAITING);
+
+      if (state.phase === "flying" && prevPhase !== "flying") {
+        carrotAnim.play();
+        // A fresh flight starts from the corner. Without this the clip would
+        // be planted at last round's hover point for the first frame and read
+        // as jumping back down to the start.
+        tip.x = board.x + board.w * START_X;
+        tip.y = board.y + board.h * START_Y;
       }
+      if (state.phase !== "flying" && prevPhase === "flying") carrotAnim.stop();
 
       if (state.phase === "crashed" && prevPhase !== "crashed") {
         burstStart = elapsed;
@@ -219,7 +254,19 @@ export function CrashCanvas({ phase, multiplier, phaseEndsAt }: Props) {
       if (!showNumber) numberSince = null;
       const numberAge = numberSince !== null ? elapsed - numberSince : null;
 
-      draw(ctx, width, height, board, state, sparks, elapsed, tip, carrotSize, numberAge);
+      draw(ctx, width, height, board, state, sparks, sparkTravel, elapsed, tip, carrotSize, numberAge);
+
+      // After the draw, not before it: the curve is what works out where the
+      // tip is this frame, and reading it beforehand leaves the clip a frame
+      // behind the trail it is supposed to be riding.
+      carrotEl.style.visibility = state.phase === "flying" ? "visible" : "hidden";
+      if (state.phase === "flying") {
+        // The clips live inside the board, the tip is in stage coordinates.
+        carrotEl.style.left = `${tip.x - board.x}px`;
+        carrotEl.style.top = `${tip.y - board.y}px`;
+        carrotEl.style.opacity = String(fadeIn(state.multiplier));
+      }
+
       frame = requestAnimationFrame(render);
     };
     frame = requestAnimationFrame(render);
@@ -265,6 +312,7 @@ function draw(
   board: Box,
   state: Board,
   sparks: Spark[],
+  sparkTravel: number,
   elapsed: number,
   tip: { x: number; y: number },
   carrotSize: number,
@@ -274,7 +322,12 @@ function draw(
   ctx.fillStyle = "#000000";
   ctx.fillRect(0, 0, width, height);
 
-  drawSparks(ctx, width, height, sparks, elapsed);
+  // In flight the field fills the screen and tears past. Between rounds it
+  // pulls back into the board and slows to a drift, so the countdown stands in
+  // clear space with the sparkles only around it.
+  const stage = { x: 0, y: 0, w: width, h: height };
+  const field = state.phase === "flying" ? stage : board;
+  drawSparks(ctx, field, stage, sparks, sparkTravel);
 
   // The grid is up for as long as a round is on, burst and all; only the trail
   // goes with the carrot, which is why the reference board reads as empty space
@@ -294,21 +347,33 @@ function draw(
 
 function drawSparks(
   ctx: CanvasRenderingContext2D,
-  width: number,
-  height: number,
+  field: Box,
+  stage: Box,
   sparks: Spark[],
-  elapsed: number,
+  travel: number,
 ) {
   ctx.save();
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
 
-  for (const spark of sparks) {
+  // The field is scattered for the whole stage, so filling a smaller box means
+  // showing proportionally fewer of them -- otherwise pulling back into the
+  // board would pack the same crowd into a third of the room. The order is
+  // random, so a prefix is an even sample of it.
+  const share = (field.w * field.h) / (stage.w * stage.h);
+  const shown = Math.round(sparks.length * Math.min(1, share));
+
+  for (let i = 0; i < shown; i++) {
+    const spark = sparks[i];
     // Wrap rather than respawn, so the field never visibly thins out.
-    const y = ((spark.y * height + elapsed * spark.drift) % height + height) % height;
+    const fallen = spark.y * field.h + spark.drift * travel;
     ctx.font = `${spark.size}px system-ui, sans-serif`;
     ctx.fillStyle = `rgba(255, 255, 255, ${spark.alpha})`;
-    ctx.fillText("✦", spark.x * width, y);
+    ctx.fillText(
+      "✦",
+      field.x + spark.x * field.w,
+      field.y + (((fallen % field.h) + field.h) % field.h),
+    );
   }
 
   ctx.restore();
@@ -326,13 +391,13 @@ function drawGrid(ctx: CanvasRenderingContext2D, width: number, board: Box, elap
   const depth = back - horizon;
   if (depth <= 0) return;
 
-  // The nearest row and the ratio between rows. Rows step back by a constant
+  // How far down the band the nearest row sits. Rows are spaced by a constant
   // factor rather than as 1/n: measured off the reference board, that is the
   // spacing that puts a line where it puts one, all the way from the front of
   // the plane to the haze at the horizon.
   const front = depth * 0.74;
   const vanishX = width / 2;
-  const spread = width * 0.227;
+  const spread = width * COLUMN_SPREAD;
   const scroll = (elapsed / GRID_PERIOD) % 1;
 
   ctx.save();
@@ -351,20 +416,25 @@ function drawGrid(ctx: CanvasRenderingContext2D, width: number, board: Box, elap
   columns.addColorStop(0.5, "rgba(128, 128, 128, 0.26)");
   columns.addColorStop(1, "rgba(128, 128, 128, 0)");
   ctx.strokeStyle = columns;
-  for (let j = -6; j <= 6; j++) {
+  for (let j = -COLUMNS; j <= COLUMNS; j++) {
     ctx.beginPath();
     ctx.moveTo(vanishX, horizon);
     ctx.lineTo(vanishX + j * spread, horizon + front);
     ctx.stroke();
   }
 
-  for (let n = 0; n < 20; n++) {
-    const near = front * Math.pow(ROW_RATIO, n + scroll);
+  // Rows step forward, not back: subtracting the scroll walks each one towards
+  // the viewer, which is the direction the plane is supposed to be coming
+  // from. Starting at -1 picks up the row that is halfway off the near edge.
+  for (let n = -1; n < 20; n++) {
+    const reach = Math.pow(ROW_RATIO, n - scroll);
+    if (reach > 1) continue;
+    const near = front * reach;
     const y = horizon + near;
-    // Brightest just under the horizon, gone by the front of the plane: the
-    // reference lays a black gradient over the near end of the grid.
-    const reach = near / front;
-    const fade = 1 - reach;
+    // Dark at both ends: rows rise out of the haze at the horizon and dim
+    // again as they run off the near edge, so neither end of the plane is a
+    // line you can point at.
+    const fade = (1 - reach) * Math.min(1, reach / GRID_HAZE);
 
     ctx.strokeStyle = `rgba(128, 128, 128, ${0.34 * fade})`;
     ctx.beginPath();
@@ -375,7 +445,7 @@ function drawGrid(ctx: CanvasRenderingContext2D, width: number, board: Box, elap
     // A dot on every crossing, shrinking with the row it sits on.
     const radius = Math.max(0.5, 2.4 * reach);
     ctx.fillStyle = `rgba(255, 255, 255, ${0.45 * fade})`;
-    for (let j = -6; j <= 6; j++) {
+    for (let j = -COLUMNS; j <= COLUMNS; j++) {
       const x = vanishX + j * spread * reach;
       ctx.beginPath();
       ctx.arc(x, y, radius, 0, Math.PI * 2);
@@ -400,8 +470,10 @@ function drawCurve(
 ) {
   const flown = secondsToReach(multiplier);
   const climb = Math.min(1, flown / RISE_SECONDS);
-  // Ease out, so the climb slows into the hover instead of stopping dead.
-  const eased = 1 - Math.pow(1 - climb, 2.2);
+  // Smoothstep: the clip leaves the corner from rest and settles into the
+  // hover. An ease-out spent most of the distance in the first half second,
+  // which under a fade-in is a clip that simply appears near the top.
+  const eased = climb * climb * (3 - 2 * climb);
 
   // Once it is up there the clip never sits perfectly still: the reference
   // drifts it around by a few pixels for the rest of the round.
@@ -464,11 +536,7 @@ function clamp(value: number, low: number, high: number): number {
  * snapping a curve onto the board.
  */
 function fadeIn(multiplier: number): number {
-  // Squared, so the first tenth of a second really is nothing: a carrot at a
-  // quarter opacity is still perfectly legible against a black board, and it
-  // would be sitting off the bottom-left corner where the reference shows
-  // empty space.
-  return Math.min(1, secondsToReach(multiplier) / FADE_IN) ** 2;
+  return Math.min(1, secondsToReach(multiplier) / FADE_IN);
 }
 
 /** The seconds left before take-off, alone on the board behind a soft halo. */

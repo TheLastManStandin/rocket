@@ -9,10 +9,18 @@
     <title>Racketka</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <!-- Only the balance chip uses it, and only at one weight: the reference
-         board sets that number in IBM Plex Mono and nothing else in it. -->
+    <!--
+      Inter stands in for the reference board's SF Pro Display, which is
+      Apple's and not ours to ship. Apple devices reach the real thing through
+      -apple-system in the stack and never touch this; everywhere else it is
+      the difference between the board's face and whatever generic sans the
+      system happens to hand back.
+
+      IBM Plex Mono is the balance chip and nothing else, at one weight: that
+      is what the reference sets that number in.
+    -->
     <link
-      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500&display=swap"
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500&family=Inter:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
     <script src="https://telegram.org/js/telegram-web-app.js"></script>

@@ -60,7 +60,7 @@ const BURST_SIZE = 240;
 /** The retro grid's band: how far above the board it starts, and how deep. */
 const GRID_RISE = 112;
 /** Seconds the grid takes to bring one row forward. Lower is faster. */
-const GRID_PERIOD = 1.2;
+const GRID_PERIOD = 1;
 /**
  * The shape of one cell. ROW_RATIO is how much closer to the horizon each row
  * sits than the one in front of it, so lowering it spaces the rows out;
@@ -102,11 +102,11 @@ const GRID_COLUMN_ALPHA = 0.42;
  * and by WAITING while the next one is being set up.
  */
 const SPARK_DENSITY = 13000;
-const SPARK_MIN_SIZE = 8;
-const SPARK_SIZE_SPREAD = 24;
+const SPARK_MIN_SIZE = 20;
+const SPARK_SIZE_SPREAD = 26;
 const SPARK_MIN_DRIFT = 9;
 const SPARK_DRIFT_SPREAD = 17;
-const SPARK_FLYING = 10;
+const SPARK_FLYING = 15;
 const SPARK_WAITING = 1;
 
 /**

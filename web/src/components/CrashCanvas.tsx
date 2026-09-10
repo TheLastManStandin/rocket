@@ -67,10 +67,16 @@ const CARROT_SIZE = 195;
 /** The burst clip needs more room than the carrot: it expands well past it. */
 const BURST_SIZE = 240;
 
-/** The retro grid's band: how far above the board it starts, and how deep. */
-const GRID_RISE = 112;
+/**
+ * Where the plane's vanishing point sits inside the board, as a fraction of
+ * its height. The near end is not a constant: the plane runs down to the
+ * trail's baseline, so the two finish on the same line.
+ */
+const GRID_HORIZON = 0.08;
+/** How far above the board's bottom edge the trail sits, in pixels. */
+const TRAIL_BASELINE = 2;
 /** Seconds the grid takes to bring one row forward. Lower is faster. */
-const GRID_PERIOD = 1;
+const GRID_PERIOD = 0.6;
 /**
  * The shape of one cell. ROW_RATIO is how much closer to the horizon each row
  * sits than the one in front of it, so lowering it spaces the rows out;
@@ -104,6 +110,11 @@ const GRID_HAZE = 0.12;
 const GRID_ROW_ALPHA = 0.55;
 const GRID_DOT_ALPHA = 0.72;
 const GRID_COLUMN_ALPHA = 0.42;
+/**
+ * How much of the trail's own colour makes it to the board. The gradients
+ * below are the reference board's; this thins the lot of them at once.
+ */
+const TRAIL_OPACITY = 0.5;
 
 /**
  * The sparkle field. One square of box per sparkle for DENSITY, glyph sizes
@@ -112,8 +123,8 @@ const GRID_COLUMN_ALPHA = 0.42;
  * and by WAITING while the next one is being set up.
  */
 const SPARK_DENSITY = 13000;
-const SPARK_MIN_SIZE = 20;
-const SPARK_SIZE_SPREAD = 26;
+const SPARK_MIN_SIZE = 14;
+const SPARK_SIZE_SPREAD = 20;
 const SPARK_MIN_DRIFT = 9;
 const SPARK_DRIFT_SPREAD = 17;
 const SPARK_FLYING = 15;
@@ -456,16 +467,11 @@ function drawSparks(
  * as a window onto something bigger.
  */
 function drawGrid(ctx: CanvasRenderingContext2D, width: number, board: Box, gridTime: number) {
-  const horizon = board.y + board.h * 0.08;
-  const back = board.y - GRID_RISE + 400;
-  const depth = back - horizon;
-  if (depth <= 0) return;
-
-  // How far down the band the nearest row sits. Rows are spaced by a constant
-  // factor rather than as 1/n: measured off the reference board, that is the
-  // spacing that puts a line where it puts one, all the way from the front of
-  // the plane to the haze at the horizon.
-  const front = depth * 0.74;
+  const horizon = board.y + board.h * GRID_HORIZON;
+  // The plane stops where the trail does rather than in mid-air above it, so
+  // the near row and the foot of the curve are the same line.
+  const front = board.y + board.h - TRAIL_BASELINE - horizon;
+  if (front <= 0) return;
   const vanishX = width / 2;
   const spread = width * COLUMN_SPREAD;
   const scroll = (gridTime / GRID_PERIOD) % 1;
@@ -473,7 +479,7 @@ function drawGrid(ctx: CanvasRenderingContext2D, width: number, board: Box, grid
 
   ctx.save();
   ctx.beginPath();
-  ctx.rect(0, horizon, width, depth);
+  ctx.rect(0, horizon, width, front);
   ctx.clip();
   ctx.lineWidth = 1;
 
@@ -485,7 +491,7 @@ function drawGrid(ctx: CanvasRenderingContext2D, width: number, board: Box, grid
   const columnFade = ctx.createLinearGradient(0, horizon, 0, horizon + front);
   columnFade.addColorStop(0, "rgba(128, 128, 128, 0)");
   columnFade.addColorStop(0.5, `rgba(128, 128, 128, ${GRID_COLUMN_ALPHA})`);
-  columnFade.addColorStop(1, "rgba(128, 128, 128, 0)");
+  columnFade.addColorStop(1, `rgba(128, 128, 128, ${GRID_COLUMN_ALPHA})`);
   ctx.strokeStyle = columnFade;
   for (let j = -columns; j <= columns; j++) {
     ctx.beginPath();
@@ -502,10 +508,10 @@ function drawGrid(ctx: CanvasRenderingContext2D, width: number, board: Box, grid
     if (reach > 1) continue;
     const near = front * reach;
     const y = horizon + near;
-    // Dark at both ends: rows rise out of the haze at the horizon and dim
-    // again as they run off the near edge, so neither end of the plane is a
-    // line you can point at.
-    const fade = (1 - reach) * Math.min(1, reach / GRID_HAZE);
+    // Only the far end fades. Rows rise out of the haze at the horizon and
+    // then hold their brightness all the way down, so the plane ends on a
+    // clean edge at the trail's foot rather than dissolving before it.
+    const fade = Math.min(1, reach / GRID_HAZE);
 
     ctx.strokeStyle = `rgba(128, 128, 128, ${GRID_ROW_ALPHA * fade})`;
     ctx.beginPath();
@@ -560,12 +566,12 @@ function drawCurve(
     hover * Math.sin(elapsed * 0.8) * HOVER_SWAY_Y;
 
   const originX = 0;
-  const originY = board.h - 2;
+  const originY = board.h - TRAIL_BASELINE;
   const controlX = tipX / 2;
   const controlY = board.h;
 
   ctx.save();
-  ctx.globalAlpha = fadeIn(flown);
+  ctx.globalAlpha = fadeIn(flown) * TRAIL_OPACITY;
   ctx.translate(board.x, board.y);
 
   const stroke = ctx.createLinearGradient(0, originY, tipX, tipY);

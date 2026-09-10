@@ -10,13 +10,14 @@ import (
 	"github.com/cahisa/racketka/internal/wallet"
 )
 
-// GracePeriod keeps a game alive after the last client drops, so a flaky
+// GracePeriod keeps the table alive after the last client drops, so a flaky
 // connection resumes the same round instead of losing the stake on it.
 const GracePeriod = 60 * time.Second
 
-// Manager is the registry of everyone currently connected. A player's game is
-// created the first time they connect and torn down once they have been gone
-// for the grace period.
+// Manager owns the one table. It is started by the first player to connect and
+// torn down once the last of them has been gone for the grace period -- there
+// is no round worth running with nobody watching it, and the next one to
+// arrive opens a fresh one.
 type Manager struct {
 	cfg     game.Config
 	wallet  wallet.Wallet
@@ -24,8 +25,8 @@ type Manager struct {
 	log     *slog.Logger
 	grace   time.Duration
 
-	mu       sync.Mutex
-	sessions map[int64]*entry
+	mu    sync.Mutex
+	table *entry
 }
 
 type entry struct {
@@ -39,30 +40,29 @@ type entry struct {
 // neither restored nor kept.
 func NewManager(cfg game.Config, w wallet.Wallet, a Archive, log *slog.Logger) *Manager {
 	return &Manager{
-		cfg:      cfg,
-		wallet:   w,
-		archive:  a,
-		log:      log,
-		grace:    GracePeriod,
-		sessions: map[int64]*entry{},
+		cfg:     cfg,
+		wallet:  w,
+		archive: a,
+		log:     log,
+		grace:   GracePeriod,
 	}
 }
 
-// Acquire returns the player's game, starting it on their first connection.
-// Every Acquire must be paired with a Release.
-func (m *Manager) Acquire(userID int64) *Session {
+// Acquire returns the table, starting it for the first player through the
+// door. Every Acquire must be paired with a Release.
+func (m *Manager) Acquire() *Session {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	e, running := m.sessions[userID]
-	if !running {
+	e := m.table
+	if e == nil {
 		ctx, cancel := context.WithCancel(context.Background())
-		s := newSession(userID, m.cfg, m.wallet, m.archive, m.log)
+		s := newSession(m.cfg, m.wallet, m.archive, m.log)
 		e = &entry{session: s, cancel: cancel}
-		m.sessions[userID] = e
+		m.table = e
 		go func() {
 			s.run(ctx)
-			m.forget(userID, e)
+			m.forget(e)
 		}()
 	}
 
@@ -75,14 +75,14 @@ func (m *Manager) Acquire(userID int64) *Session {
 	return e.session
 }
 
-// Release drops one connection. The game keeps running until the grace period
-// runs out, so a reconnect lands back in the same round.
-func (m *Manager) Release(userID int64) {
+// Release drops one connection. The table keeps running until the grace period
+// runs out with nobody on it, so a reconnect lands back in the same round.
+func (m *Manager) Release() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	e, running := m.sessions[userID]
-	if !running {
+	e := m.table
+	if e == nil {
 		return
 	}
 	if e.viewers--; e.viewers > 0 {
@@ -90,7 +90,7 @@ func (m *Manager) Release(userID int64) {
 	}
 	e.reaper = time.AfterFunc(m.grace, func() {
 		m.mu.Lock()
-		stillIdle := e.viewers == 0 && m.sessions[userID] == e
+		stillIdle := e.viewers == 0 && m.table == e
 		m.mu.Unlock()
 		if stillIdle {
 			e.cancel()
@@ -103,47 +103,55 @@ func (m *Manager) Release(userID int64) {
 // error: the balance is read fresh at sign-in anyway.
 func (m *Manager) NudgeBalance(userID, balance int64) {
 	m.mu.Lock()
-	e, running := m.sessions[userID]
+	e := m.table
 	m.mu.Unlock()
 
-	if running {
-		e.session.PushBalance(balance)
+	if e != nil {
+		e.session.PushBalance(userID, balance)
 	}
 }
 
-func (m *Manager) forget(userID int64, e *entry) {
+func (m *Manager) forget(e *entry) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.sessions[userID] == e {
-		delete(m.sessions, userID)
+	if m.table == e {
+		m.table = nil
 	}
 }
 
-// Online is how many players currently have a game running.
+// Online is how many connections the table is currently serving.
 func (m *Manager) Online() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return len(m.sessions)
+	if m.table == nil {
+		return 0
+	}
+	return m.table.viewers
 }
 
-// Shutdown stops every running game.
+// Running reports whether the table is up at all. It outlives the last
+// connection by the grace period, so this is not the same question as Online.
+func (m *Manager) Running() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.table != nil
+}
+
+// Shutdown stops the table.
 func (m *Manager) Shutdown() {
 	m.mu.Lock()
-	entries := make([]*entry, 0, len(m.sessions))
-	for _, e := range m.sessions {
-		// reaper is guarded by mu, so it is stopped in here rather than
-		// alongside cancel below. Stop never waits on a callback already
-		// running, so holding the lock it wants cannot deadlock.
-		if e.reaper != nil {
-			e.reaper.Stop()
-		}
-		entries = append(entries, e)
+	e := m.table
+	// reaper is guarded by mu, so it is stopped in here rather than alongside
+	// cancel below. Stop never waits on a callback already running, so holding
+	// the lock it wants cannot deadlock.
+	if e != nil && e.reaper != nil {
+		e.reaper.Stop()
 	}
 	m.mu.Unlock()
 
-	// Cancelling stays outside the lock: tearing a session down ends in
+	// Cancelling stays outside the lock: tearing the table down ends in
 	// forget, which wants the same mutex.
-	for _, e := range entries {
+	if e != nil {
 		e.cancel()
 	}
 }

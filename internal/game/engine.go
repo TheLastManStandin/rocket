@@ -75,11 +75,54 @@ func (c Config) withDefaults() Config {
 	return c
 }
 
-// PlayerBet is the human's stake on the current round.
+// Player is a human at the table, in the terms the table is drawn in. It rides
+// along with their stake so everyone else can see who is in the round.
+type Player struct {
+	ID       int64  `json:"id"`
+	Name     string `json:"name"`
+	PhotoURL string `json:"photoUrl,omitempty"`
+	Hue      int    `json:"hue"`
+	Initial  string `json:"initial"`
+}
+
+// NewPlayer fills in what the table draws from what the account carries. The
+// avatar colour and letter are worked out the same way a bot's are, so a
+// player without a photo sits in the list looking like everyone else.
+func NewPlayer(id int64, name, photoURL string) Player {
+	return Player{
+		ID:       id,
+		Name:     name,
+		PhotoURL: photoURL,
+		Hue:      hueFor(name),
+		Initial:  initialFor(name),
+	}
+}
+
+// PlayerBet is one human's stake on a round.
 type PlayerBet struct {
+	Player      Player
 	Amount      int64
 	CashedOutAt Multiplier // 0 while still riding
 	Payout      int64
+}
+
+// View is the stake as the rest of the table is allowed to see it.
+func (b *PlayerBet) View() PlayerView {
+	return PlayerView{
+		Player:      b.Player,
+		Bet:         b.Amount,
+		CashedOutAt: b.CashedOutAt,
+		Payout:      b.Payout,
+	}
+}
+
+// PlayerView is a human's stake on the wire, shaped like a bot's so the client
+// can lay the two out in one list.
+type PlayerView struct {
+	Player
+	Bet         int64      `json:"bet"`
+	CashedOutAt Multiplier `json:"cashedOutAt,omitempty"`
+	Payout      int64      `json:"payout,omitempty"`
 }
 
 func (b *PlayerBet) cashedOut() bool { return b != nil && b.CashedOutAt != 0 }
@@ -100,11 +143,16 @@ type Round struct {
 	OpenedAt  time.Time
 	PhaseEnds time.Time
 	TookOffAt time.Time
-	Bet       *PlayerBet
+
+	// Bets is everyone in the round, in the order they got in. A slice rather
+	// than a map: the table is drawn in arrival order, and a handful of names
+	// is not worth an index.
+	Bets []*PlayerBet
 }
 
-// Game is one player's private crash table: their own rocket, their own crash
-// point, their own crowd of bots. Nothing is shared between players.
+// Game is the crash table: one rocket, one crash point, one crowd of bots, and
+// everyone who staked on the round in progress. There is only ever one of
+// these.
 //
 // It is not safe for concurrent use; Session owns the goroutine that drives it.
 type Game struct {
@@ -113,10 +161,11 @@ type Game struct {
 	nextID int64
 	round  Round
 
-	// queued is a stake taken while the round on screen was already in the air.
-	// It is paid for the moment it is taken, and openRound seats it -- which is
-	// why it lives on the game rather than on the round it was made from.
-	queued  *PlayerBet
+	// queued are stakes taken while the round on screen was already in the air.
+	// They are paid for the moment they are taken, and openRound seats them --
+	// which is why they live on the game rather than on the round they were
+	// made from.
+	queued  []*PlayerBet
 	history []Multiplier
 }
 
@@ -126,10 +175,25 @@ func New(cfg Config, rnd *rand.Rand, now time.Time) *Game {
 	return g
 }
 
-func (g *Game) Phase() Phase          { return g.round.Phase }
-func (g *Game) RoundID() int64        { return g.round.ID }
-func (g *Game) Bet() *PlayerBet       { return g.round.Bet }
-func (g *Game) QueuedBet() *PlayerBet { return g.queued }
+func (g *Game) Phase() Phase   { return g.round.Phase }
+func (g *Game) RoundID() int64 { return g.round.ID }
+
+// Bet is the player's stake on the round in progress, nil when they are not in
+// it.
+func (g *Game) Bet(userID int64) *PlayerBet { return find(g.round.Bets, userID) }
+
+// QueuedBet is the player's stake waiting for the next round, nil when they
+// have none waiting.
+func (g *Game) QueuedBet(userID int64) *PlayerBet { return find(g.queued, userID) }
+
+func find(bets []*PlayerBet, userID int64) *PlayerBet {
+	for _, b := range bets {
+		if b.Player.ID == userID {
+			return b
+		}
+	}
+	return nil
+}
 
 // Current is what the curve reads right now.
 func (g *Game) Current(now time.Time) Multiplier {
@@ -216,19 +280,21 @@ func (g *Game) openRound(now time.Time) []Event {
 		EndsInMS: g.cfg.BettingWindow.Milliseconds(),
 	}}
 
-	// A stake taken while the last round was in the air comes down here. It was
-	// paid for when it was taken, so seating it is bookkeeping and not a wallet
-	// call -- which is what keeps Advance free of I/O. The event carries no
-	// balance for the same reason: nothing moved.
-	if g.queued != nil {
-		g.round.Bet = g.queued
-		g.queued = nil
+	// Stakes taken while the last round was in the air come down here. They
+	// were paid for when they were taken, so seating them is bookkeeping and
+	// not a wallet call -- which is what keeps Advance free of I/O. The events
+	// carry no balance for the same reason: nothing moved.
+	for _, bet := range g.queued {
+		g.round.Bets = append(g.round.Bets, bet)
+		player := bet.Player
 		out = append(out, Event{
 			Type:    EventBetPlaced,
 			RoundID: g.round.ID,
-			Amount:  g.round.Bet.Amount,
+			Player:  &player,
+			Amount:  bet.Amount,
 		})
 	}
+	g.queued = nil
 	return out
 }
 
@@ -289,7 +355,7 @@ func (g *Game) burst(at time.Time) []Event {
 		RoundID:    g.round.ID,
 		Multiplier: g.round.Crash,
 		History:    g.History(),
-		Settled:    g.round.Bet,
+		Settled:    g.round.Bets,
 	}}
 }
 
@@ -301,7 +367,7 @@ func (g *Game) burst(at time.Time) []Event {
 // The caller debits the wallet before calling and refunds when this returns an
 // error: money is authoritative in the ledger, and the round may have taken off
 // between the balance check and here.
-func (g *Game) PlaceBet(amount int64) (Placement, error) {
+func (g *Game) PlaceBet(p Player, amount int64) (Placement, error) {
 	if amount < g.cfg.MinBet || amount > g.cfg.MaxBet {
 		return 0, ErrStakeOutOfRange
 	}
@@ -309,30 +375,31 @@ func (g *Game) PlaceBet(amount int64) (Placement, error) {
 	// Bets are shut for the round on screen, but there is a next one coming and
 	// no reason to turn the stake away until it opens.
 	if g.round.Phase != PhaseBetting {
-		if g.queued != nil {
+		if find(g.queued, p.ID) != nil {
 			return 0, ErrAlreadyQueued
 		}
-		g.queued = &PlayerBet{Amount: amount}
+		g.queued = append(g.queued, &PlayerBet{Player: p, Amount: amount})
 		return QueuedForNext, nil
 	}
 
-	if g.round.Bet != nil {
+	if find(g.round.Bets, p.ID) != nil {
 		return 0, ErrAlreadyBet
 	}
-	g.round.Bet = &PlayerBet{Amount: amount}
+	g.round.Bets = append(g.round.Bets, &PlayerBet{Player: p, Amount: amount})
 	return PlacedThisRound, nil
 }
 
 // CashOut settles the player's stake at whatever the curve reads now, which is
 // the server's clock and never a value the client sent. The caller credits the
 // returned payout.
-func (g *Game) CashOut(now time.Time) (Multiplier, int64, error) {
+func (g *Game) CashOut(userID int64, now time.Time) (Multiplier, int64, error) {
+	bet := find(g.round.Bets, userID)
 	switch {
 	case g.round.Phase != PhaseFlying:
 		return 0, 0, ErrNotFlying
-	case g.round.Bet == nil:
+	case bet == nil:
 		return 0, 0, ErrNoBet
-	case g.round.Bet.cashedOut():
+	case bet.cashedOut():
 		return 0, 0, ErrAlreadyCashedOut
 	}
 
@@ -343,9 +410,9 @@ func (g *Game) CashOut(now time.Time) (Multiplier, int64, error) {
 		return 0, 0, ErrNotFlying
 	}
 
-	g.round.Bet.CashedOutAt = current
-	g.round.Bet.Payout = current.Payout(g.round.Bet.Amount)
-	return current, g.round.Bet.Payout, nil
+	bet.CashedOutAt = current
+	bet.Payout = current.Payout(bet.Amount)
+	return current, bet.Payout, nil
 }
 
 // SeedHistory restores the strip of recent bursts from the player's earlier
@@ -363,29 +430,41 @@ func (g *Game) History() []Multiplier {
 	return out
 }
 
-// Snapshot is the full picture a client needs on connect or reconnect.
-func (g *Game) Snapshot(now time.Time) Event {
+// Snapshot is the full picture one client needs on connect or reconnect. It is
+// cut for a particular viewer: the table is everyone's, the stake fields on it
+// are theirs.
+func (g *Game) Snapshot(userID int64, now time.Time) Event {
 	e := Event{
 		Type:       EventState,
 		RoundID:    g.round.ID,
 		Phase:      g.round.Phase,
 		Multiplier: g.Current(now),
 		Bots:       g.botViews(),
+		Players:    g.playerViews(),
 		History:    g.History(),
 	}
 	if remaining := g.round.PhaseEnds.Sub(now); remaining > 0 && g.round.Phase != PhaseFlying {
 		e.EndsInMS = remaining.Milliseconds()
 	}
-	if b := g.round.Bet; b != nil {
+	if b := find(g.round.Bets, userID); b != nil {
 		e.Amount = b.Amount
 		if b.cashedOut() {
 			e.Multiplier, e.Payout = b.CashedOutAt, b.Payout
 		}
 	}
-	if q := g.queued; q != nil {
+	if q := find(g.queued, userID); q != nil {
 		e.QueuedAmount = q.Amount
 	}
 	return e
+}
+
+// playerViews is everyone in the round as the table draws them.
+func (g *Game) playerViews() []PlayerView {
+	out := make([]PlayerView, 0, len(g.round.Bets))
+	for _, b := range g.round.Bets {
+		out = append(out, b.View())
+	}
+	return out
 }
 
 // BotView is a bot as the client is allowed to see it: the exit multiplier
@@ -416,17 +495,22 @@ func (g *Game) botViews() []BotView {
 // Event is one message on the wire. Fields stay omitempty so each message
 // carries only what it means.
 type Event struct {
-	Type       string       `json:"type"`
-	RoundID    int64        `json:"roundId,omitempty"`
-	Phase      Phase        `json:"phase,omitempty"`
-	EndsInMS   int64        `json:"endsInMs,omitempty"`
-	Multiplier Multiplier   `json:"multiplier,omitempty"`
-	Bots       []BotView    `json:"bots,omitempty"`
-	BotID      string       `json:"botId,omitempty"`
-	Amount     int64        `json:"amount,omitempty"`
-	Payout     int64        `json:"payout,omitempty"`
-	Balance    int64        `json:"balance,omitempty"`
-	History    []Multiplier `json:"history,omitempty"`
+	Type       string     `json:"type"`
+	RoundID    int64      `json:"roundId,omitempty"`
+	Phase      Phase      `json:"phase,omitempty"`
+	EndsInMS   int64      `json:"endsInMs,omitempty"`
+	Multiplier Multiplier `json:"multiplier,omitempty"`
+	Bots       []BotView  `json:"bots,omitempty"`
+	BotID      string     `json:"botId,omitempty"`
+
+	// Player is whose stake an event is about. Bets and cash-outs go out to
+	// the whole table, so every one of them has to say who it belongs to.
+	Player  *Player      `json:"player,omitempty"`
+	Players []PlayerView `json:"players,omitempty"`
+	Amount  int64        `json:"amount,omitempty"`
+	Payout  int64        `json:"payout,omitempty"`
+	Balance int64        `json:"balance,omitempty"`
+	History []Multiplier `json:"history,omitempty"`
 
 	// QueuedAmount rides on a snapshot so a client that reconnects between
 	// rounds still finds the stake it left waiting.
@@ -437,8 +521,9 @@ type Event struct {
 	Code    string `json:"code,omitempty"`
 	Message string `json:"message,omitempty"`
 
-	// Settled rides along with a burst so the archive can file the stake as it
-	// stood. Never serialised: the client already knows its own bet, and by the
-	// time a caller reads Bet() the next round may have opened.
-	Settled *PlayerBet `json:"-"`
+	// Settled rides along with a burst so the archive can file the stakes as
+	// they stood. Never serialised: every client already knows its own bet and
+	// has watched the rest of the table, and by the time a caller reads Bet()
+	// the next round may have opened.
+	Settled []*PlayerBet `json:"-"`
 }

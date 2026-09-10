@@ -62,6 +62,9 @@ func (w *fakeWallet) reasons() []string {
 	return out
 }
 
+// alice is the player these tests sit at the table.
+var alice = game.NewPlayer(1, "Alice", "")
+
 // testConfig keeps the betting window wide so tests are not racing the clock.
 func testConfig() game.Config {
 	return game.Config{
@@ -74,23 +77,20 @@ func testConfig() game.Config {
 	}
 }
 
-func TestManagerGivesEveryPlayerTheirOwnGame(t *testing.T) {
+func TestEveryPlayerLandsOnTheSameTable(t *testing.T) {
 	m := NewManager(testConfig(), newFakeWallet(5000), nil, nil)
 	defer m.Shutdown()
 
-	first := m.Acquire(1)
-	again := m.Acquire(1)
-	other := m.Acquire(2)
-	defer func() { m.Release(1); m.Release(1); m.Release(2) }()
+	first := m.Acquire()
+	again := m.Acquire()
+	other := m.Acquire()
+	defer func() { m.Release(); m.Release(); m.Release() }()
 
-	if first != again {
-		t.Error("a second connection from the same player started a second game")
+	if first != again || first != other {
+		t.Error("players ended up on tables of their own")
 	}
-	if first == other {
-		t.Error("two players ended up sharing one game")
-	}
-	if got := m.Online(); got != 2 {
-		t.Errorf("Online() = %d, want 2", got)
+	if got := m.Online(); got != 3 {
+		t.Errorf("Online() = %d, want the 3 connections", got)
 	}
 }
 
@@ -99,22 +99,22 @@ func TestSessionSurvivesAReconnectInsideTheGracePeriod(t *testing.T) {
 	defer m.Shutdown()
 	m.grace = 300 * time.Millisecond
 
-	first := m.Acquire(1)
-	m.Release(1)
+	first := m.Acquire()
+	m.Release()
 
-	// Back before the grace period runs out: same game, same round.
+	// Back before the grace period runs out: same table, same round.
 	time.Sleep(50 * time.Millisecond)
-	resumed := m.Acquire(1)
+	resumed := m.Acquire()
 	if resumed != first {
-		t.Fatal("reconnecting inside the grace period started a fresh game")
+		t.Fatal("reconnecting inside the grace period started a fresh table")
 	}
 
-	m.Release(1)
+	m.Release()
 	deadline := time.After(2 * time.Second)
-	for m.Online() > 0 {
+	for m.Running() {
 		select {
 		case <-deadline:
-			t.Fatal("the game was never torn down after the grace period")
+			t.Fatal("the table was never torn down after the grace period")
 		case <-time.After(20 * time.Millisecond):
 		}
 	}
@@ -124,13 +124,13 @@ func TestSubscribeOpensWithASnapshot(t *testing.T) {
 	m := NewManager(testConfig(), newFakeWallet(5000), nil, nil)
 	defer m.Shutdown()
 
-	s := m.Acquire(1)
-	defer m.Release(1)
+	s := m.Acquire()
+	defer m.Release()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	events, unsubscribe, err := s.Subscribe(ctx)
+	events, unsubscribe, err := s.Subscribe(ctx, alice.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,20 +167,20 @@ func TestPlaceBetTakesTheStakeAndAnnouncesIt(t *testing.T) {
 	m := NewManager(testConfig(), w, nil, nil)
 	defer m.Shutdown()
 
-	s := m.Acquire(1)
-	defer m.Release(1)
+	s := m.Acquire()
+	defer m.Release()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	events, unsubscribe, err := s.Subscribe(ctx)
+	events, unsubscribe, err := s.Subscribe(ctx, alice.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer unsubscribe()
 	<-events // snapshot
 
-	balance, err := s.PlaceBet(ctx, 500)
+	balance, err := s.PlaceBet(ctx, alice, 500)
 	if err != nil {
 		t.Fatalf("PlaceBet returned %v", err)
 	}
@@ -188,18 +188,19 @@ func TestPlaceBetTakesTheStakeAndAnnouncesIt(t *testing.T) {
 		t.Errorf("balance after a 500 stake is %d, want 4500", balance)
 	}
 
-	for {
-		select {
-		case e := <-events:
-			if e.Type == game.EventBetPlaced {
-				if e.Amount != 500 || e.Balance != 4500 {
-					t.Errorf("bet_placed carried %d at balance %d, want 500 at 4500", e.Amount, e.Balance)
-				}
-				return
-			}
-		case <-ctx.Done():
-			t.Fatal("the bet was never announced")
-		}
+	// The stake goes out to the table, the balance only to whoever staked it.
+	placed := waitFor(ctx, t, events, game.EventBetPlaced)
+	if placed.Amount != 500 {
+		t.Errorf("bet_placed carried %d, want 500", placed.Amount)
+	}
+	if placed.Player == nil || placed.Player.ID != alice.ID {
+		t.Errorf("bet_placed says it belongs to %+v, want alice", placed.Player)
+	}
+	if placed.Balance != 0 {
+		t.Errorf("bet_placed carried a balance of %d over the table", placed.Balance)
+	}
+	if told := waitFor(ctx, t, events, game.EventBalance); told.Balance != 4500 {
+		t.Errorf("the player was told their balance is %d, want 4500", told.Balance)
 	}
 }
 
@@ -209,16 +210,16 @@ func TestPlaceBetRefundsWhenTheRoundWillNotTakeIt(t *testing.T) {
 	m := NewManager(testConfig(), w, nil, nil)
 	defer m.Shutdown()
 
-	s := m.Acquire(1)
-	defer m.Release(1)
+	s := m.Acquire()
+	defer m.Release()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	if _, err := s.PlaceBet(ctx, 500); err != nil {
+	if _, err := s.PlaceBet(ctx, alice, 500); err != nil {
 		t.Fatal(err)
 	}
-	balance, err := s.PlaceBet(ctx, 700)
+	balance, err := s.PlaceBet(ctx, alice, 700)
 	if !errors.Is(err, game.ErrAlreadyBet) {
 		t.Fatalf("a second bet returned %v, want ErrAlreadyBet", err)
 	}
@@ -246,20 +247,20 @@ func TestBetMadeInFlightIsQueuedForTheNextRound(t *testing.T) {
 	m := NewManager(cfg, w, nil, nil)
 	defer m.Shutdown()
 
-	s := m.Acquire(1)
-	defer m.Release(1)
+	s := m.Acquire()
+	defer m.Release()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	events, unsubscribe, err := s.Subscribe(ctx)
+	events, unsubscribe, err := s.Subscribe(ctx, alice.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer unsubscribe()
 	waitFor(ctx, t, events, game.EventTookOff)
 
-	balance, err := s.PlaceBet(ctx, 500)
+	balance, err := s.PlaceBet(ctx, alice, 500)
 	if err != nil {
 		t.Fatalf("betting in flight returned %v", err)
 	}
@@ -267,11 +268,14 @@ func TestBetMadeInFlightIsQueuedForTheNextRound(t *testing.T) {
 		t.Errorf("balance after a queued 500 stake is %d, want 4500", balance)
 	}
 	queued := waitFor(ctx, t, events, game.EventBetQueued)
-	if queued.Amount != 500 || queued.Balance != 4500 {
-		t.Errorf("bet_queued carried %d at balance %d, want 500 at 4500", queued.Amount, queued.Balance)
+	if queued.Amount != 500 {
+		t.Errorf("bet_queued carried %d, want 500", queued.Amount)
+	}
+	if told := waitFor(ctx, t, events, game.EventBalance); told.Balance != 4500 {
+		t.Errorf("the player was told their balance is %d, want 4500", told.Balance)
 	}
 
-	if _, err := s.PlaceBet(ctx, 500); !errors.Is(err, game.ErrAlreadyQueued) {
+	if _, err := s.PlaceBet(ctx, alice, 500); !errors.Is(err, game.ErrAlreadyQueued) {
 		t.Errorf("queueing twice returned %v, want ErrAlreadyQueued", err)
 	}
 
@@ -306,12 +310,12 @@ func TestPlaceBetRejectsStakesOutsideTheLimitsWithoutTouchingTheWallet(t *testin
 	m := NewManager(testConfig(), w, nil, nil)
 	defer m.Shutdown()
 
-	s := m.Acquire(1)
-	defer m.Release(1)
+	s := m.Acquire()
+	defer m.Release()
 
 	ctx := context.Background()
 	for _, amount := range []int64{5, 50000} {
-		if _, err := s.PlaceBet(ctx, amount); !errors.Is(err, game.ErrStakeOutOfRange) {
+		if _, err := s.PlaceBet(ctx, alice, amount); !errors.Is(err, game.ErrStakeOutOfRange) {
 			t.Errorf("staking %d returned %v, want ErrStakeOutOfRange", amount, err)
 		}
 	}
@@ -324,14 +328,14 @@ func TestCashOutBeforeTakeOffIsRefused(t *testing.T) {
 	m := NewManager(testConfig(), newFakeWallet(5000), nil, nil)
 	defer m.Shutdown()
 
-	s := m.Acquire(1)
-	defer m.Release(1)
+	s := m.Acquire()
+	defer m.Release()
 
 	ctx := context.Background()
-	if _, err := s.PlaceBet(ctx, 500); err != nil {
+	if _, err := s.PlaceBet(ctx, alice, 500); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, err := s.CashOut(ctx); !errors.Is(err, game.ErrNotFlying) {
+	if _, _, _, err := s.CashOut(ctx, alice.ID); !errors.Is(err, game.ErrNotFlying) {
 		t.Errorf("cashing out during betting returned %v, want ErrNotFlying", err)
 	}
 }
@@ -340,19 +344,19 @@ func TestClosedSessionStopsServingCommands(t *testing.T) {
 	m := NewManager(testConfig(), newFakeWallet(5000), nil, nil)
 	m.grace = 10 * time.Millisecond
 
-	s := m.Acquire(1)
-	m.Release(1)
+	s := m.Acquire()
+	m.Release()
 
 	deadline := time.After(2 * time.Second)
-	for m.Online() > 0 {
+	for m.Running() {
 		select {
 		case <-deadline:
-			t.Fatal("the session never shut down")
+			t.Fatal("the table never shut down")
 		case <-time.After(5 * time.Millisecond):
 		}
 	}
 
-	if _, err := s.PlaceBet(context.Background(), 500); !errors.Is(err, ErrSessionClosed) {
+	if _, err := s.PlaceBet(context.Background(), alice, 500); !errors.Is(err, ErrSessionClosed) {
 		t.Errorf("betting on a closed session returned %v, want ErrSessionClosed", err)
 	}
 }

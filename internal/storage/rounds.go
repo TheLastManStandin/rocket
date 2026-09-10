@@ -7,63 +7,74 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// RoundRecord is one finished round of a player's private game. Multipliers
-// arrive in hundredths, the same units the engine settles in.
+// RoundRecord is one finished round of the shared table, and every stake that
+// was on it. Multipliers arrive in hundredths, the same units the engine
+// settles in.
 type RoundRecord struct {
+	CrashPoint int64
+	Bets       []SettledBet
+}
+
+// SettledBet is one player's stake as the burst left it.
+type SettledBet struct {
 	UserID      int64
-	CrashPoint  int64
-	BetAmount   int64 // 0 when the player sat the round out
+	Amount      int64
 	CashedOutAt int64 // 0 when they never got out
 	Payout      int64
 }
 
-// RecordRound files a burst, and the stake on it when there was one.
+// RecordRound files a burst and every stake that rode it. The round has no
+// owner: it is the table's, and the players on it hang off the bets.
 func (s *Store) RecordRound(ctx context.Context, r RoundRecord) error {
 	err := s.inTx(ctx, func(tx pgx.Tx) error {
 		const round = `
-			INSERT INTO rounds (user_id, crash_point, crashed_at, status)
-			VALUES ($1, $2::numeric / 100, now(), 'crashed')
+			INSERT INTO rounds (crash_point, crashed_at, status)
+			VALUES ($1::numeric / 100, now(), 'crashed')
 			RETURNING id`
 
 		var roundID int64
-		if err := tx.QueryRow(ctx, round, r.UserID, r.CrashPoint).Scan(&roundID); err != nil {
+		if err := tx.QueryRow(ctx, round, r.CrashPoint).Scan(&roundID); err != nil {
 			return err
-		}
-		if r.BetAmount == 0 {
-			return nil
-		}
-
-		status, cashedOut := "lost", any(nil)
-		if r.CashedOutAt > 0 {
-			status = "won"
-			cashedOut = float64(r.CashedOutAt) / 100
 		}
 
 		const bet = `
 			INSERT INTO bets (round_id, user_id, amount, cashout_multiplier, payout, status, settled_at)
 			VALUES ($1, $2, $3, $4, $5, $6, now())`
-		_, err := tx.Exec(ctx, bet, roundID, r.UserID, r.BetAmount, cashedOut, r.Payout, status)
-		return err
+		for _, b := range r.Bets {
+			status, cashedOut := "lost", any(nil)
+			if b.CashedOutAt > 0 {
+				status = "won"
+				cashedOut = float64(b.CashedOutAt) / 100
+			}
+			if _, err := tx.Exec(ctx, bet, roundID, b.UserID, b.Amount, cashedOut, b.Payout, status); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 	if err != nil {
-		return fmt.Errorf("storage: recording a round for user %d: %w", r.UserID, err)
+		return fmt.Errorf("storage: recording a round: %w", err)
 	}
 	return nil
 }
 
-// RecentCrashPoints is the player's last bursts, newest first, in hundredths.
-// It fills the history strip the moment they open the app.
-func (s *Store) RecentCrashPoints(ctx context.Context, userID int64, limit int) ([]int64, error) {
+// RecentCrashPoints is the table's last bursts, newest first, in hundredths.
+// It fills the history strip the moment anyone opens the app.
+//
+// Only rounds without an owner are counted. Rounds from before the table was
+// shared belong to one player each, and mixing them in would show the strip
+// somebody else's game.
+func (s *Store) RecentCrashPoints(ctx context.Context, limit int) ([]int64, error) {
 	const q = `
 		SELECT (crash_point * 100)::bigint
 		FROM rounds
-		WHERE user_id = $1 AND crashed_at IS NOT NULL
+		WHERE user_id IS NULL AND crashed_at IS NOT NULL
 		ORDER BY id DESC
-		LIMIT $2`
+		LIMIT $1`
 
-	rows, err := s.pool.Query(ctx, q, userID, limit)
+	rows, err := s.pool.Query(ctx, q, limit)
 	if err != nil {
-		return nil, fmt.Errorf("storage: reading recent rounds for user %d: %w", userID, err)
+		return nil, fmt.Errorf("storage: reading recent rounds: %w", err)
 	}
 	defer rows.Close()
 

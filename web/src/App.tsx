@@ -28,7 +28,7 @@ export function App() {
       .catch((err: Error) => setFailure(err.message));
   }, []);
 
-  const { state, bet, cashOut } = useCrashGame(account?.token ?? null);
+  const { state, bet, cashOut } = useCrashGame(account?.token ?? null, account?.user.id ?? 0);
 
   // The balance the socket reports wins once it has said anything; the auth
   // response only seeds the very first paint.
@@ -96,13 +96,7 @@ export function App() {
           onCashOut={cashOut}
         />
 
-        <PlayersList
-          bots={state.bots}
-          bet={state.bet}
-          multiplier={state.multiplier}
-          playerName={account.user.firstName || account.user.username || "Вы"}
-          playerPhoto={account.user.photoUrl}
-        />
+        <PlayersList bots={state.bots} players={state.players} multiplier={state.multiplier} />
       </div>
 
       {state.error && <p className="notice">{state.error}</p>}

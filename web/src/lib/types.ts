@@ -17,6 +17,27 @@ export interface Bot {
   payout?: number;
 }
 
+/** A human at the table. Shaped like a Bot so the two lay out as one list. */
+export interface Player {
+  id: number;
+  name: string;
+  photoUrl?: string;
+  hue: number;
+  initial: string;
+  bet: number;
+  cashedOutAt?: number;
+  payout?: number;
+}
+
+/** Who an event is about, on the events that carry a person. */
+export interface PlayerRef {
+  id: number;
+  name: string;
+  photoUrl?: string;
+  hue: number;
+  initial: string;
+}
+
 export interface ServerEvent {
   type: string;
   roundId?: number;
@@ -25,6 +46,8 @@ export interface ServerEvent {
   multiplier?: number;
   bots?: Bot[];
   botId?: string;
+  players?: Player[];
+  player?: PlayerRef;
   amount?: number;
   payout?: number;
   balance?: number;

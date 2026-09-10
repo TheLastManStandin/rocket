@@ -1,5 +1,6 @@
-// Package session drives one player's game: a goroutine owns the round, a
-// ticker advances it, and connected clients read events off a fan-out.
+// Package session drives the table everyone plays on: a goroutine owns the
+// round, a ticker advances it, and connected clients read events off a
+// fan-out.
 package session
 
 import (
@@ -28,17 +29,23 @@ const (
 
 var ErrSessionClosed = errors.New("session: closed")
 
-// Archive keeps finished rounds, so a returning player finds the history strip
-// already filled in rather than blank.
+// Archive keeps finished rounds, so a player opening the app finds the history
+// strip already filled in rather than blank. The strip is the table's, not any
+// one player's: everybody has been watching the same bursts.
 type Archive interface {
-	RecentCrashPoints(ctx context.Context, userID int64, limit int) ([]int64, error)
+	RecentCrashPoints(ctx context.Context, limit int) ([]int64, error)
 	RecordRound(ctx context.Context, r storage.RoundRecord) error
 }
 
-// Session is the only owner of its Game. Everything that touches the round
-// goes through the command channel, so the game itself needs no locking.
+// Session is the one table, and the only owner of its Game. Everything that
+// touches the round goes through the command channel, so the game itself needs
+// no locking.
+//
+// Most of what happens here is everyone's business -- the curve, the bursts,
+// who is in the round and where they got out. A balance is not, so subscribers
+// are tagged with whose connection they are and the private half of an event
+// goes only there.
 type Session struct {
-	userID  int64
 	cfg     game.Config
 	wallet  wallet.Wallet
 	archive Archive
@@ -48,19 +55,18 @@ type Session struct {
 	done chan struct{}
 
 	mu   sync.Mutex
-	subs map[chan game.Event]struct{}
+	subs map[chan game.Event]int64
 }
 
-func newSession(userID int64, cfg game.Config, w wallet.Wallet, a Archive, log *slog.Logger) *Session {
+func newSession(cfg game.Config, w wallet.Wallet, a Archive, log *slog.Logger) *Session {
 	return &Session{
-		userID:  userID,
 		cfg:     cfg,
 		wallet:  w,
 		archive: a,
 		log:     log,
 		cmds:    make(chan func(*game.Game, time.Time)),
 		done:    make(chan struct{}),
-		subs:    map[chan game.Event]struct{}{},
+		subs:    map[chan game.Event]int64{},
 	}
 }
 
@@ -99,11 +105,11 @@ func (s *Session) restoreHistory(ctx context.Context, g *game.Game) {
 	if s.archive == nil {
 		return
 	}
-	past, err := s.archive.RecentCrashPoints(ctx, s.userID, game.HistoryLen)
+	past, err := s.archive.RecentCrashPoints(ctx, game.HistoryLen)
 	if err != nil {
 		// A blank strip is a cosmetic loss; refusing to start the game is not.
 		if s.log != nil {
-			s.log.Warn("could not restore the history strip", "user", s.userID, "error", err)
+			s.log.Warn("could not restore the history strip", "error", err)
 		}
 		return
 	}
@@ -124,17 +130,20 @@ func (s *Session) fileBursts(events []game.Event) {
 		if e.Type != game.EventCrashed {
 			continue
 		}
-		record := storage.RoundRecord{UserID: s.userID, CrashPoint: int64(e.Multiplier)}
-		if bet := e.Settled; bet != nil {
-			record.BetAmount = bet.Amount
-			record.CashedOutAt = int64(bet.CashedOutAt)
-			record.Payout = bet.Payout
+		record := storage.RoundRecord{CrashPoint: int64(e.Multiplier)}
+		for _, bet := range e.Settled {
+			record.Bets = append(record.Bets, storage.SettledBet{
+				UserID:      bet.Player.ID,
+				Amount:      bet.Amount,
+				CashedOutAt: int64(bet.CashedOutAt),
+				Payout:      bet.Payout,
+			})
 		}
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			if err := s.archive.RecordRound(ctx, record); err != nil && s.log != nil {
-				s.log.Warn("could not record a round", "user", record.UserID, "error", err)
+				s.log.Warn("could not record a round", "error", err)
 			}
 		}()
 	}
@@ -173,13 +182,13 @@ func (s *Session) do(ctx context.Context, fn func(*game.Game, time.Time)) error 
 // A stake offered while the rocket is already up waits for the next round. It
 // is paid for now either way: the game seats it when that round opens, and
 // that path must not need the wallet.
-func (s *Session) PlaceBet(ctx context.Context, amount int64) (int64, error) {
+func (s *Session) PlaceBet(ctx context.Context, p game.Player, amount int64) (int64, error) {
 	if amount < s.cfg.MinBet || amount > s.cfg.MaxBet {
 		return 0, game.ErrStakeOutOfRange
 	}
 
-	ref := fmt.Sprintf("user:%d", s.userID)
-	balance, err := s.wallet.Debit(ctx, s.userID, amount, wallet.ReasonBet, ref)
+	ref := fmt.Sprintf("user:%d", p.ID)
+	balance, err := s.wallet.Debit(ctx, p.ID, amount, wallet.ReasonBet, ref)
 	if err != nil {
 		return 0, err
 	}
@@ -187,35 +196,45 @@ func (s *Session) PlaceBet(ctx context.Context, amount int64) (int64, error) {
 	var placement game.Placement
 	recorded := error(nil)
 	if err := s.do(ctx, func(g *game.Game, _ time.Time) {
-		placement, recorded = g.PlaceBet(amount)
+		placement, recorded = g.PlaceBet(p, amount)
 	}); err != nil {
 		recorded = err
 	}
 	if recorded != nil {
-		if refunded, rerr := s.wallet.Credit(ctx, s.userID, amount, wallet.ReasonRefund, ref); rerr == nil {
+		if refunded, rerr := s.wallet.Credit(ctx, p.ID, amount, wallet.ReasonRefund, ref); rerr == nil {
 			balance = refunded
 		}
 		return balance, recorded
 	}
 
-	announced := game.EventBetPlaced
+	// A stake on the round in progress joins the table everyone is looking at.
+	// One waiting for the next round is not in it yet, so nobody but the
+	// player it belongs to has any business hearing about it.
 	if placement == game.QueuedForNext {
-		announced = game.EventBetQueued
+		s.send(p.ID, []game.Event{{Type: game.EventBetQueued, Player: &p, Amount: amount}})
+	} else {
+		s.broadcast([]game.Event{{Type: game.EventBetPlaced, Player: &p, Amount: amount}})
 	}
-	s.broadcast([]game.Event{{Type: announced, Amount: amount, Balance: balance}})
+	s.send(p.ID, []game.Event{{Type: game.EventBalance, Balance: balance}})
 	return balance, nil
 }
 
 // CashOut settles at the curve as the server reads it when the request lands,
 // never at a multiplier the client claims to be showing.
-func (s *Session) CashOut(ctx context.Context) (game.Multiplier, int64, int64, error) {
+func (s *Session) CashOut(ctx context.Context, userID int64) (game.Multiplier, int64, int64, error) {
 	var (
 		at      game.Multiplier
 		payout  int64
+		player  game.Player
 		settled error
 	)
 	if err := s.do(ctx, func(g *game.Game, now time.Time) {
-		at, payout, settled = g.CashOut(now)
+		// Read who it was inside the same turn as the settlement: by the time
+		// this returns the round may have burst and taken the bet with it.
+		if bet := g.Bet(userID); bet != nil {
+			player = bet.Player
+		}
+		at, payout, settled = g.CashOut(userID, now)
 	}); err != nil {
 		return 0, 0, 0, err
 	}
@@ -223,7 +242,7 @@ func (s *Session) CashOut(ctx context.Context) (game.Multiplier, int64, int64, e
 		return 0, 0, 0, settled
 	}
 
-	balance, err := s.wallet.Credit(ctx, s.userID, payout, wallet.ReasonPayout, fmt.Sprintf("user:%d", s.userID))
+	balance, err := s.wallet.Credit(ctx, userID, payout, wallet.ReasonPayout, fmt.Sprintf("user:%d", userID))
 	if err != nil {
 		// The round is already settled in the game; the ledger is what owes the
 		// player, so surface this loudly rather than pretending it paid.
@@ -232,23 +251,24 @@ func (s *Session) CashOut(ctx context.Context) (game.Multiplier, int64, int64, e
 
 	s.broadcast([]game.Event{{
 		Type:       game.EventCashedOut,
+		Player:     &player,
 		Multiplier: at,
 		Payout:     payout,
-		Balance:    balance,
 	}})
+	s.send(userID, []game.Event{{Type: game.EventBalance, Balance: balance}})
 	return at, payout, balance, nil
 }
 
 // Subscribe hands back a stream that opens with a full snapshot. Registering
 // inside the goroutine means no event can slip between the snapshot and the
 // first live message.
-func (s *Session) Subscribe(ctx context.Context) (<-chan game.Event, func(), error) {
+func (s *Session) Subscribe(ctx context.Context, userID int64) (<-chan game.Event, func(), error) {
 	ch := make(chan game.Event, outboxSize)
 
 	if err := s.do(ctx, func(g *game.Game, now time.Time) {
-		ch <- g.Snapshot(now)
+		ch <- g.Snapshot(userID, now)
 		s.mu.Lock()
-		s.subs[ch] = struct{}{}
+		s.subs[ch] = userID
 		s.mu.Unlock()
 	}); err != nil {
 		return nil, nil, err
@@ -271,18 +291,27 @@ func (s *Session) Subscribe(ctx context.Context) (<-chan game.Event, func(), err
 // PushBalance reports a balance the round did not cause -- a Stars top-up
 // landing mid-flight, say. It deliberately does not touch the game: the money
 // arrived from outside it, and a round in progress is none of its business.
-func (s *Session) PushBalance(balance int64) {
-	s.broadcast([]game.Event{{Type: game.EventBalance, Balance: balance}})
+func (s *Session) PushBalance(userID, balance int64) {
+	s.send(userID, []game.Event{{Type: game.EventBalance, Balance: balance}})
 }
 
-func (s *Session) broadcast(events []game.Event) {
+func (s *Session) broadcast(events []game.Event) { s.deliver(events, nil) }
+
+// send is the private half of the fan-out: a balance belongs to one player and
+// must not go out over the table.
+func (s *Session) send(userID int64, events []game.Event) { s.deliver(events, &userID) }
+
+func (s *Session) deliver(events []game.Event, only *int64) {
 	if len(events) == 0 {
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	for ch := range s.subs {
+	for ch, owner := range s.subs {
+		if only != nil && owner != *only {
+			continue
+		}
 		if !offerAll(ch, events) {
 			// A client that cannot keep up gets dropped whole rather than fed a
 			// stream with holes in it. Reconnecting hands it a fresh snapshot.

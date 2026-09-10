@@ -1,4 +1,4 @@
-// Package ws bridges one websocket connection to a player's session.
+// Package ws bridges one websocket connection to the shared table.
 package ws
 
 import (
@@ -14,6 +14,7 @@ import (
 	"github.com/cahisa/racketka/internal/auth"
 	"github.com/cahisa/racketka/internal/game"
 	"github.com/cahisa/racketka/internal/session"
+	"github.com/cahisa/racketka/internal/storage"
 	"github.com/cahisa/racketka/internal/wallet"
 )
 
@@ -36,10 +37,18 @@ const (
 	cmdCashOut = "cashout"
 )
 
+// Accounts is where a connection finds out who it belongs to. The name and
+// the photo go on the table for everyone else to see, so they are read once
+// here rather than taken from anything the client says about itself.
+type Accounts interface {
+	UserByID(ctx context.Context, id int64) (*storage.User, error)
+}
+
 type Deps struct {
 	Manager        *session.Manager
 	Issuer         *auth.Issuer
 	Wallet         wallet.Wallet
+	Accounts       Accounts
 	OriginPatterns []string
 	Logger         *slog.Logger
 }
@@ -47,6 +56,12 @@ type Deps struct {
 func Handler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		claims, err := d.Issuer.Parse(r.URL.Query().Get("token"), time.Now())
+		if err != nil {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		player, err := playerOf(r.Context(), d.Accounts, claims.UserID)
 		if err != nil {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
@@ -64,12 +79,12 @@ func Handler(d Deps) http.HandlerFunc {
 		ctx, cancel := context.WithCancel(r.Context())
 		defer cancel()
 
-		// The player's game starts here on their first connection and outlives
-		// a brief drop, so a reconnect lands back in the same round.
-		s := d.Manager.Acquire(claims.UserID)
-		defer d.Manager.Release(claims.UserID)
+		// The table starts here for the first player through the door and
+		// outlives a brief drop, so a reconnect lands back in the same round.
+		s := d.Manager.Acquire()
+		defer d.Manager.Release()
 
-		events, unsubscribe, err := s.Subscribe(ctx)
+		events, unsubscribe, err := s.Subscribe(ctx, player.ID)
 		if err != nil {
 			return
 		}
@@ -79,7 +94,7 @@ func Handler(d Deps) http.HandlerFunc {
 		// say something funnels through here.
 		out := make(chan game.Event, outboundSize)
 
-		go readCommands(ctx, cancel, conn, s, out, d.Logger)
+		go readCommands(ctx, cancel, conn, s, player, out, d.Logger)
 		go func() {
 			defer cancel()
 			for e := range events {
@@ -103,11 +118,31 @@ func Handler(d Deps) http.HandlerFunc {
 	}
 }
 
+// playerOf reads the account behind a token into the shape the table draws.
+func playerOf(ctx context.Context, accounts Accounts, userID int64) (game.Player, error) {
+	if accounts == nil {
+		return game.NewPlayer(userID, "Игрок", ""), nil
+	}
+	u, err := accounts.UserByID(ctx, userID)
+	if err != nil {
+		return game.Player{}, err
+	}
+	name := u.FirstName
+	if name == "" {
+		name = u.Username
+	}
+	if name == "" {
+		name = "Игрок"
+	}
+	return game.NewPlayer(u.ID, name, u.PhotoURL), nil
+}
+
 func readCommands(
 	ctx context.Context,
 	cancel context.CancelFunc,
 	conn *websocket.Conn,
 	s *session.Session,
+	player game.Player,
 	out chan<- game.Event,
 	log *slog.Logger,
 ) {
@@ -122,9 +157,9 @@ func readCommands(
 		var refusal error
 		switch cmd.Type {
 		case cmdBet:
-			_, refusal = s.PlaceBet(ctx, cmd.Amount)
+			_, refusal = s.PlaceBet(ctx, player, cmd.Amount)
 		case cmdCashOut:
-			_, _, _, refusal = s.CashOut(ctx)
+			_, _, _, refusal = s.CashOut(ctx, player.ID)
 		default:
 			refusal = errors.New("unknown command")
 		}

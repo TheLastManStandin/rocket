@@ -2,7 +2,6 @@ package ws_test
 
 import (
 	"context"
-	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -215,8 +214,16 @@ func TestBetAndCashOutTravelOverTheSocket(t *testing.T) {
 	if placed.Amount != 500 {
 		t.Errorf("bet_placed carried %d, want 500", placed.Amount)
 	}
-	if placed.Balance != 4500 {
-		t.Errorf("balance after the stake is %d, want 4500", placed.Balance)
+	if placed.Player == nil || placed.Player.ID != 1 {
+		t.Errorf("bet_placed says it belongs to %+v, want player 1", placed.Player)
+	}
+	// The balance follows on its own, addressed to the player who staked.
+	told, err := readUntil(ctx, conn, game.EventBalance)
+	if err != nil {
+		t.Fatalf("the balance never arrived: %v", err)
+	}
+	if got := told[len(told)-1].Balance; got != 4500 {
+		t.Errorf("balance after the stake is %d, want 4500", got)
 	}
 
 	// Let the rocket leave, then take the money.
@@ -241,8 +248,12 @@ func TestBetAndCashOutTravelOverTheSocket(t *testing.T) {
 	if want := settled.Multiplier.Payout(500); settled.Payout != want {
 		t.Errorf("paid %d, want %d for 500 at %v", settled.Payout, want, settled.Multiplier)
 	}
-	if settled.Balance != 4500+settled.Payout {
-		t.Errorf("balance is %d, want %d", settled.Balance, 4500+settled.Payout)
+	paid, err := readUntil(ctx, conn, game.EventBalance)
+	if err != nil {
+		t.Fatalf("the balance never arrived: %v", err)
+	}
+	if got := paid[len(paid)-1].Balance; got != 4500+settled.Payout {
+		t.Errorf("balance is %d, want %d", got, 4500+settled.Payout)
 	}
 }
 
@@ -301,8 +312,8 @@ func TestRefusalsComeBackAsStableCodes(t *testing.T) {
 	})
 }
 
-// Two players must never land in the same game.
-func TestEachPlayerGetsTheirOwnRound(t *testing.T) {
+// Everyone plays the same round, and sees who else is in it.
+func TestPlayersShareOneRoundAndSeeEachOther(t *testing.T) {
 	rig := newRig(t, 10000)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -320,31 +331,37 @@ func TestEachPlayerGetsTheirOwnRound(t *testing.T) {
 	}
 
 	a, b := snapshotOf(first), snapshotOf(second)
+	if a.RoundID == 0 || b.RoundID == 0 {
+		t.Fatal("a player opened without a round")
+	}
+	if a.RoundID != b.RoundID {
+		t.Errorf("players opened on rounds %d and %d, want the same one", a.RoundID, b.RoundID)
+	}
 
-	// Only one player's stake may move, however many sockets are open.
 	if err := wsjson.Write(ctx, first, map[string]any{"type": "bet", "amount": 500}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := readUntil(ctx, first, game.EventBetPlaced); err != nil {
-		t.Fatal(err)
+
+	// The stake reaches the other player, carrying who it belongs to.
+	seen, err := readUntil(ctx, second, game.EventBetPlaced)
+	if err != nil {
+		t.Fatalf("the first player's stake never reached the second: %v", err)
+	}
+	placed := seen[len(seen)-1]
+	if placed.Amount != 500 {
+		t.Errorf("the stake arrived as %d, want 500", placed.Amount)
+	}
+	if placed.Player == nil || placed.Player.ID != 1 {
+		t.Fatalf("the stake arrived from %+v, want player 1", placed.Player)
 	}
 
-	deadline, cancelPeek := context.WithTimeout(ctx, 400*time.Millisecond)
-	defer cancelPeek()
-	for {
-		var e game.Event
-		if err := wsjson.Read(deadline, second, &e); err != nil {
-			if errors.Is(err, context.DeadlineExceeded) {
-				break // nothing of the first player's bet reached the second
-			}
-			t.Fatalf("reading the second player's stream: %v", err)
-		}
-		if e.Type == game.EventBetPlaced {
-			t.Fatal("one player's bet showed up in another player's game")
+	// Their balance does not: it went out only to the player who staked.
+	for _, e := range seen {
+		if e.Type == game.EventBalance {
+			t.Error("one player's balance was broadcast over the table")
 		}
 	}
-
-	if a.RoundID == 0 || b.RoundID == 0 {
-		t.Error("a player opened without a round of their own")
+	if placed.Balance != 0 {
+		t.Errorf("bet_placed carried a balance of %d over the table", placed.Balance)
 	}
 }

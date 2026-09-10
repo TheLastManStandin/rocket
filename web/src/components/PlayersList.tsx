@@ -1,47 +1,42 @@
 import { memo } from "react";
 
-import type { Bot, PlayerBet } from "../lib/types";
+import type { Bot, Player } from "../lib/types";
 import { Star } from "./Star";
 
 interface Props {
   bots: Bot[];
-  bet: PlayerBet | null;
-  playerName: string;
-  playerPhoto: string;
+  /** The humans in the round, in the order they got in. */
+  players: Player[];
   /** Live curve, in hundredths, for valuing stakes still in the air. */
   multiplier: number;
 }
 
 /**
- * The table under the curve. Rows are inert by design: the original opens a
+ * The table under the curve: everyone on the round, humans first and the bots
+ * filling in behind them. Rows are inert by design -- the original opens a
  * profile on tap, this one deliberately does nothing.
  */
-export const PlayersList = memo(function PlayersList({
-  bots,
-  bet,
-  playerName,
-  playerPhoto,
-  multiplier,
-}: Props) {
-  const totalBets = bots.length + (bet ? 1 : 0);
-  const totalStake = bots.reduce((sum, b) => sum + b.bet, 0) + (bet?.amount ?? 0);
+export const PlayersList = memo(function PlayersList({ bots, players, multiplier }: Props) {
+  const totalBets = bots.length + players.length;
+  const totalStake =
+    bots.reduce((sum, b) => sum + b.bet, 0) + players.reduce((sum, p) => sum + p.bet, 0);
 
   return (
     <div className="table">
       <ul className="players">
-        {bet && (
+        {players.map((player) => (
           <Row
-            key="me"
-            name={playerName}
-            photo={playerPhoto}
-            initial={initialOf(playerName)}
-            hue={210}
-            stake={bet.amount}
-            cashedOutAt={bet.cashedOutAt}
-            payout={bet.payout}
+            key={`p${player.id}`}
+            name={player.name}
+            photo={player.photoUrl}
+            initial={player.initial}
+            hue={player.hue}
+            stake={player.bet}
+            cashedOutAt={player.cashedOutAt}
+            payout={player.payout}
             multiplier={multiplier}
           />
-        )}
+        ))}
         {bots.map((bot) => (
           <Row
             key={bot.id}
@@ -109,11 +104,6 @@ function Row({ name, photo, initial, hue, stake, cashedOutAt, payout, multiplier
       </span>
     </li>
   );
-}
-
-function initialOf(name: string): string {
-  const match = name.match(/[\p{L}\p{N}]/u);
-  return match ? match[0].toUpperCase() : "?";
 }
 
 function plural(n: number, one: string, few: string, many: string): string {

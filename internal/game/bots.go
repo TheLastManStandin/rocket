@@ -12,9 +12,10 @@ import (
 
 // Bot is one of the fake players filling the table for a single round.
 //
-// The list under the curve is theatre: there is no shared round, so every
-// player gets their own crowd. Everything about a bot is decided when the round
-// opens, and the engine only reveals it on schedule.
+// The table is real -- everyone is on the same round -- but it would be a thin
+// one on the strength of the humans alone, so a crowd is seated alongside them.
+// Everything about a bot is decided when the round opens, and the engine only
+// reveals it on schedule.
 type Bot struct {
 	ID      string `json:"id"`
 	Name    string `json:"name"`

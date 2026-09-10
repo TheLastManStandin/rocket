@@ -2,7 +2,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { socketURL } from "./api";
 import { multiplierAt, secondsToReach } from "./multiplier";
-import { EVENT, type Bot, type Phase, type PlayerBet, type ServerEvent } from "./types";
+import {
+  EVENT,
+  type Bot,
+  type Phase,
+  type Player,
+  type PlayerBet,
+  type ServerEvent,
+} from "./types";
 
 export interface CrashState {
   connected: boolean;
@@ -19,6 +26,8 @@ export interface CrashState {
    */
   bettingWindowMs: number;
   bots: Bot[];
+  /** Everyone human in the round, in the order they got in. */
+  players: Player[];
   history: number[];
   balance: number;
   bet: PlayerBet | null;
@@ -38,6 +47,7 @@ const initialState: CrashState = {
   phaseEndsAt: null,
   bettingWindowMs: 7000,
   bots: [],
+  players: [],
   history: [],
   balance: 0,
   bet: null,
@@ -60,7 +70,7 @@ const REFUSALS: Record<string, string> = {
 const RECONNECT_MIN = 500;
 const RECONNECT_MAX = 10_000;
 
-export function useCrashGame(token: string | null) {
+export function useCrashGame(token: string | null, selfID: number) {
   const [state, setState] = useState<CrashState>(initialState);
 
   const socketRef = useRef<WebSocket | null>(null);
@@ -96,7 +106,7 @@ export function useCrashGame(token: string | null) {
 
       socket.onmessage = (message) => {
         const event = JSON.parse(message.data as string) as ServerEvent;
-        setState((s) => reduce(s, event, takeoffRef));
+        setState((s) => reduce(s, event, takeoffRef, selfID));
       };
 
       socket.onclose = () => {
@@ -118,7 +128,7 @@ export function useCrashGame(token: string | null) {
       socketRef.current?.close();
       socketRef.current = null;
     };
-  }, [token]);
+  }, [token, selfID]);
 
   // The server ticks ten times a second; this fills in the frames between so the
   // curve climbs smoothly instead of stepping.
@@ -145,6 +155,7 @@ function reduce(
   s: CrashState,
   e: ServerEvent,
   takeoffRef: { current: number | null },
+  selfID: number,
 ): CrashState {
   switch (e.type) {
     case EVENT.state: {
@@ -160,6 +171,7 @@ function reduce(
         multiplier: e.multiplier ?? 100,
         phaseEndsAt: e.endsInMs ? Date.now() + e.endsInMs : null,
         bots: e.bots ?? [],
+        players: e.players ?? [],
         history: e.history ?? [],
         bet: e.amount
           ? { amount: e.amount, cashedOutAt: e.payout ? e.multiplier : undefined, payout: e.payout }
@@ -181,9 +193,10 @@ function reduce(
         // whatever is left of it.
         bettingWindowMs: e.endsInMs ?? s.bettingWindowMs,
         bots: e.bots ?? [],
-        // A stake that was waiting arrives seated: the server sends bet_placed
-        // straight after this, with no balance on it, because the money went
-        // when the stake was taken.
+        // Stakes that were waiting arrive seated: the server sends a
+        // bet_placed for each straight after this, with no balance on them,
+        // because the money went when they were taken.
+        players: [],
         bet: null,
         queued: null,
         error: null,
@@ -229,31 +242,40 @@ function reduce(
         history: e.history ?? s.history,
       };
 
-    case EVENT.betPlaced:
+    case EVENT.betPlaced: {
+      // Every stake goes out to the whole table, so this arrives for other
+      // players too. Only the one carrying our own id is our bet.
+      const who = e.player;
+      if (!who) return s;
+      const seated: Player = { ...who, bet: e.amount ?? 0 };
+      const mine = who.id === selfID;
       return {
         ...s,
-        bet: { amount: e.amount ?? 0 },
-        queued: null,
-        balance: e.balance ?? s.balance,
-        error: null,
+        players: [...s.players.filter((p) => p.id !== who.id), seated],
+        bet: mine ? { amount: e.amount ?? 0 } : s.bet,
+        queued: mine ? null : s.queued,
+        error: mine ? null : s.error,
       };
+    }
 
     case EVENT.betQueued:
-      return {
-        ...s,
-        queued: e.amount ?? 0,
-        balance: e.balance ?? s.balance,
-        error: null,
-      };
+      // Private to the player it belongs to: a stake waiting for the next
+      // round is not on this one's table.
+      return { ...s, queued: e.amount ?? 0, error: null };
 
-    case EVENT.cashedOut:
+    case EVENT.cashedOut: {
+      const who = e.player;
+      const mine = who ? who.id === selfID : true;
       return {
         ...s,
-        bet: s.bet
-          ? { ...s.bet, cashedOutAt: e.multiplier, payout: e.payout }
-          : s.bet,
-        balance: e.balance ?? s.balance,
+        players: who
+          ? s.players.map((p) =>
+              p.id === who.id ? { ...p, cashedOutAt: e.multiplier, payout: e.payout } : p,
+            )
+          : s.players,
+        bet: mine && s.bet ? { ...s.bet, cashedOutAt: e.multiplier, payout: e.payout } : s.bet,
       };
+    }
 
     case EVENT.balance:
       return { ...s, balance: e.balance ?? s.balance };

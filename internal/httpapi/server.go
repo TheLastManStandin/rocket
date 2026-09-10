@@ -50,10 +50,11 @@ func NewRouter(d Deps) http.Handler {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "online": d.Manager.Online()})
 	})
 	mux.Handle("GET /ws", ws.Handler(ws.Deps{
-		Manager: d.Manager,
-		Issuer:  d.Issuer,
-		Wallet:  d.Wallet,
-		Logger:  d.Logger,
+		Manager:  d.Manager,
+		Issuer:   d.Issuer,
+		Wallet:   d.Wallet,
+		Accounts: d.Store,
+		Logger:   d.Logger,
 	}))
 	mux.Handle("/", spa(d.WebRoot))
 

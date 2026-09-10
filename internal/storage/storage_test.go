@@ -281,3 +281,91 @@ func TestUserByTgID(t *testing.T) {
 		t.Error("an unknown telegram id should not resolve to a player")
 	}
 }
+
+// A burst is one row whoever was on it, and the strip everybody reads is the
+// same one. Both live in SQL: the round lost its owner and the bets table lost
+// its one-bet-per-round constraint in the same migration.
+func TestRecordRoundFilesOneSharedRoundWithEveryStake(t *testing.T) {
+	store := testStore(t)
+	ctx := context.Background()
+
+	alice := newPlayer(t, store, 5000)
+	bob := newPlayer(t, store, 5000)
+
+	record := storage.RoundRecord{
+		CrashPoint: 250,
+		Bets: []storage.SettledBet{
+			{UserID: alice.ID, Amount: 500, CashedOutAt: 200, Payout: 1000},
+			{UserID: bob.ID, Amount: 700},
+		},
+	}
+	if err := store.RecordRound(ctx, record); err != nil {
+		t.Fatalf("RecordRound: %v", err)
+	}
+
+	// One round, no owner, both stakes hanging off it.
+	var roundID int64
+	var owner *int64
+	const round = `
+		SELECT id, user_id FROM rounds
+		WHERE crash_point = 2.50 AND user_id IS NULL
+		ORDER BY id DESC LIMIT 1`
+	if err := store.Pool().QueryRow(ctx, round).Scan(&roundID, &owner); err != nil {
+		t.Fatalf("the shared round was not filed: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = store.Pool().Exec(context.Background(), `DELETE FROM rounds WHERE id = $1`, roundID)
+	})
+	if owner != nil {
+		t.Errorf("the round was filed under player %d, want nobody", *owner)
+	}
+
+	rows, err := store.Pool().Query(ctx,
+		`SELECT user_id, amount, payout, status FROM bets WHERE round_id = $1 ORDER BY user_id`, roundID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+
+	type filed struct {
+		userID, amount, payout int64
+		status                 string
+	}
+	var got []filed
+	for rows.Next() {
+		var f filed
+		if err := rows.Scan(&f.userID, &f.amount, &f.payout, &f.status); err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, f)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("the round carries %d stakes, want both", len(got))
+	}
+	for _, f := range got {
+		switch f.userID {
+		case alice.ID:
+			if f.amount != 500 || f.payout != 1000 || f.status != "won" {
+				t.Errorf("alice was filed as %+v, want 500 staked, 1000 paid, won", f)
+			}
+		case bob.ID:
+			if f.amount != 700 || f.payout != 0 || f.status != "lost" {
+				t.Errorf("bob was filed as %+v, want 700 staked, nothing paid, lost", f)
+			}
+		default:
+			t.Errorf("a stranger turned up on the round: %+v", f)
+		}
+	}
+
+	// The strip is the table's, so the burst just filed is on it.
+	strip, err := store.RecentCrashPoints(ctx, 10)
+	if err != nil {
+		t.Fatalf("RecentCrashPoints: %v", err)
+	}
+	if len(strip) == 0 || strip[0] != 250 {
+		t.Errorf("the strip opens with %v, want the 250 just filed", strip)
+	}
+}

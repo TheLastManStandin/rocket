@@ -33,7 +33,14 @@ const CRASH = "255, 48, 100";
  * few seconds and then hovers in the top right for the rest of the round --
  * the number, not the curve, is what carries a long flight.
  */
-const RISE_SECONDS = 2.4;
+const RISE_SECONDS = 3;
+/**
+ * How far the render loop's flight clock may sit from the multiplier in state
+ * before it is reset to it, in seconds. Below this the gap is the quantising
+ * and correcting it would stutter; above it something real happened -- a
+ * reconnect mid-round, a tab waking up -- and the clock is wrong.
+ */
+const RE_ANCHOR = 0.3;
 /**
  * How long the trail and the clip take to fade up out of the take-off. Keep it
  * short: the climb is the thing worth watching, and a fade that outlasts the
@@ -71,6 +78,14 @@ const COLUMNS = 4;
  * plane ends -- this is only wide enough to swallow that line.
  */
 const GRID_HAZE = 0.12;
+/**
+ * How brightly the plane is drawn: the rows, the dots on their crossings, and
+ * the columns running back to the vanishing point. Each is the alpha at the
+ * brightest point of its fade.
+ */
+const GRID_ROW_ALPHA = 0.55;
+const GRID_DOT_ALPHA = 0.72;
+const GRID_COLUMN_ALPHA = 0.42;
 
 /**
  * The sparkle field. One square of box per sparkle for DENSITY, glyph sizes
@@ -78,13 +93,13 @@ const GRID_HAZE = 0.12;
  * and DRIFT + DRIFT_SPREAD -- multiplied by FLYING while a round is in the air
  * and by WAITING while the next one is being set up.
  */
-const SPARK_DENSITY = 6500;
-const SPARK_MIN_SIZE = 4;
-const SPARK_SIZE_SPREAD = 12;
+const SPARK_DENSITY = 13000;
+const SPARK_MIN_SIZE = 8;
+const SPARK_SIZE_SPREAD = 24;
 const SPARK_MIN_DRIFT = 9;
 const SPARK_DRIFT_SPREAD = 17;
-const SPARK_FLYING = 5;
-const SPARK_WAITING = 0.5;
+const SPARK_FLYING = 10;
+const SPARK_WAITING = 1;
 
 /**
  * crash-anim.json runs 180 frames at 60fps (3s) top to bottom, but its first
@@ -159,6 +174,11 @@ export function CrashCanvas({ phase, multiplier, phaseEndsAt }: Props) {
     // the rate without the whole field jumping to a new offset.
     let sparkTravel = 0;
     let lastFrame = performance.now();
+    // A local clock for the flight. The multiplier in state is quantised to
+    // whole hundredths, and around take-off one hundredth is four frames
+    // apart -- driving the climb off it directly is a clip that jerks from
+    // step to step however smoothly it is eased.
+    let flightStart: number | null = null;
     let prevPhase: Phase | null = null;
     let burstStart: number | null = null;
     let numberSince: number | null = null;
@@ -225,6 +245,20 @@ export function CrashCanvas({ phase, multiplier, phaseEndsAt }: Props) {
 
       sparkTravel += step * (state.phase === "flying" ? SPARK_FLYING : SPARK_WAITING);
 
+      if (state.phase === "flying") {
+        // Anchor on the first frame of a flight, and after that only when the
+        // local clock has really come adrift -- a reconnect into the middle of
+        // a round, or a tab coming back from sleep. Anything smaller is the
+        // quantising, and correcting for that every frame is the stutter.
+        const reported = secondsToReach(state.multiplier);
+        if (flightStart === null || Math.abs((now - flightStart) / 1000 - reported) > RE_ANCHOR) {
+          flightStart = now - reported * 1000;
+        }
+      } else {
+        flightStart = null;
+      }
+      const flown = flightStart === null ? 0 : (now - flightStart) / 1000;
+
       if (state.phase === "flying" && prevPhase !== "flying") {
         carrotAnim.play();
         // A fresh flight starts from the corner. Without this the clip would
@@ -254,7 +288,7 @@ export function CrashCanvas({ phase, multiplier, phaseEndsAt }: Props) {
       if (!showNumber) numberSince = null;
       const numberAge = numberSince !== null ? elapsed - numberSince : null;
 
-      draw(ctx, width, height, board, state, sparks, sparkTravel, elapsed, tip, carrotSize, numberAge);
+      draw(ctx, width, height, board, state, sparks, sparkTravel, flown, elapsed, tip, carrotSize, numberAge);
 
       // After the draw, not before it: the curve is what works out where the
       // tip is this frame, and reading it beforehand leaves the clip a frame
@@ -264,7 +298,7 @@ export function CrashCanvas({ phase, multiplier, phaseEndsAt }: Props) {
         // The clips live inside the board, the tip is in stage coordinates.
         carrotEl.style.left = `${tip.x - board.x}px`;
         carrotEl.style.top = `${tip.y - board.y}px`;
-        carrotEl.style.opacity = String(fadeIn(state.multiplier));
+        carrotEl.style.opacity = String(fadeIn(flown));
       }
 
       frame = requestAnimationFrame(render);
@@ -313,6 +347,7 @@ function draw(
   state: Board,
   sparks: Spark[],
   sparkTravel: number,
+  flown: number,
   elapsed: number,
   tip: { x: number; y: number },
   carrotSize: number,
@@ -334,7 +369,7 @@ function draw(
   // again the moment the round settles.
   if (state.phase !== "betting") drawGrid(ctx, width, board, elapsed);
   if (state.phase === "flying") {
-    drawCurve(ctx, board, state.multiplier, tip, carrotSize, elapsed);
+    drawCurve(ctx, board, flown, tip, carrotSize, elapsed);
   }
 
   if (state.phase === "betting") {
@@ -413,7 +448,7 @@ function drawGrid(ctx: CanvasRenderingContext2D, width: number, board: Box, elap
   // rows they are supposed to sit under.
   const columns = ctx.createLinearGradient(0, horizon, 0, horizon + front);
   columns.addColorStop(0, "rgba(128, 128, 128, 0)");
-  columns.addColorStop(0.5, "rgba(128, 128, 128, 0.26)");
+  columns.addColorStop(0.5, `rgba(128, 128, 128, ${GRID_COLUMN_ALPHA})`);
   columns.addColorStop(1, "rgba(128, 128, 128, 0)");
   ctx.strokeStyle = columns;
   for (let j = -COLUMNS; j <= COLUMNS; j++) {
@@ -436,7 +471,7 @@ function drawGrid(ctx: CanvasRenderingContext2D, width: number, board: Box, elap
     // line you can point at.
     const fade = (1 - reach) * Math.min(1, reach / GRID_HAZE);
 
-    ctx.strokeStyle = `rgba(128, 128, 128, ${0.34 * fade})`;
+    ctx.strokeStyle = `rgba(128, 128, 128, ${GRID_ROW_ALPHA * fade})`;
     ctx.beginPath();
     ctx.moveTo(0, y);
     ctx.lineTo(width, y);
@@ -444,7 +479,7 @@ function drawGrid(ctx: CanvasRenderingContext2D, width: number, board: Box, elap
 
     // A dot on every crossing, shrinking with the row it sits on.
     const radius = Math.max(0.5, 2.4 * reach);
-    ctx.fillStyle = `rgba(255, 255, 255, ${0.45 * fade})`;
+    ctx.fillStyle = `rgba(255, 255, 255, ${GRID_DOT_ALPHA * fade})`;
     for (let j = -COLUMNS; j <= COLUMNS; j++) {
       const x = vanishX + j * spread * reach;
       ctx.beginPath();
@@ -463,12 +498,12 @@ function drawGrid(ctx: CanvasRenderingContext2D, width: number, board: Box, elap
 function drawCurve(
   ctx: CanvasRenderingContext2D,
   board: Box,
-  multiplier: number,
+  /** Seconds since take-off, off the render loop's own clock. */
+  flown: number,
   tip: { x: number; y: number },
   carrotSize: number,
   elapsed: number,
 ) {
-  const flown = secondsToReach(multiplier);
   const climb = Math.min(1, flown / RISE_SECONDS);
   // Smoothstep: the clip leaves the corner from rest and settles into the
   // hover. An ease-out spent most of the distance in the first half second,
@@ -476,8 +511,11 @@ function drawCurve(
   const eased = climb * climb * (3 - 2 * climb);
 
   // Once it is up there the clip never sits perfectly still: the reference
-  // drifts it around by a few pixels for the rest of the round.
-  const hover = climb >= 1 ? 1 : 0;
+  // drifts it around by a few pixels for the rest of the round. The drift has
+  // to come up with the climb rather than switch on at the top -- a sine
+  // starting from wherever its phase happens to be is a jump of several
+  // pixels at the exact moment the clip is meant to be settling.
+  const hover = climb * climb;
   const tipX =
     board.w * (START_X + (HOVER_X - START_X) * eased) + hover * Math.sin(elapsed * 1.1) * 7;
   const tipY =
@@ -489,7 +527,7 @@ function drawCurve(
   const controlY = board.h;
 
   ctx.save();
-  ctx.globalAlpha = fadeIn(multiplier);
+  ctx.globalAlpha = fadeIn(flown);
   ctx.translate(board.x, board.y);
 
   const stroke = ctx.createLinearGradient(0, originY, tipX, tipY);
@@ -535,8 +573,8 @@ function clamp(value: number, low: number, high: number): number {
  * cross-fades them in, so a fresh round opens on bare space rather than
  * snapping a curve onto the board.
  */
-function fadeIn(multiplier: number): number {
-  return Math.min(1, secondsToReach(multiplier) / FADE_IN);
+function fadeIn(flown: number): number {
+  return Math.min(1, flown / FADE_IN);
 }
 
 /** The seconds left before take-off, alone on the board behind a soft halo. */

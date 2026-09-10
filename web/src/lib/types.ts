@@ -9,6 +9,8 @@ export type Phase = "betting" | "flying" | "crashed";
 export interface Bot {
   id: string;
   name: string;
+  /** Absent for the minority of bots that go without a picture. */
+  photoUrl?: string;
   hue: number;
   initial: string;
   bet: number;

@@ -41,6 +41,7 @@ export const PlayersList = memo(function PlayersList({ bots, players, multiplier
           <Row
             key={bot.id}
             name={bot.name}
+            photo={bot.photoUrl}
             initial={bot.initial}
             hue={bot.hue}
             stake={bot.bet}

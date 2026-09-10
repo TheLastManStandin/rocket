@@ -17,11 +17,14 @@ import (
 // Everything about a bot is decided when the round opens, and the engine only
 // reveals it on schedule.
 type Bot struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	Hue     int    `json:"hue"` // avatar is drawn client-side from this
-	Initial string `json:"initial"`
-	Bet     int64  `json:"bet"`
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	// PhotoURL is empty for the minority of bots that go without one, and the
+	// client falls back to drawing Hue and Initial the way it always has.
+	PhotoURL string `json:"photoUrl,omitempty"`
+	Hue      int    `json:"hue"`
+	Initial  string `json:"initial"`
+	Bet      int64  `json:"bet"`
 
 	// CashOutAt is where this bot leaves, or 0 when it rides the round into the
 	// burst. Never serialised: a bot leaving at x5.00 would tell the client the
@@ -53,22 +56,35 @@ func (b *Bot) Payout() int64 {
 const (
 	botsMin = 5
 	botsMax = 12
+
+	// avatarShare is how many bots in a hundred wear a picture. It is settled
+	// by the bot's name rather than by a roll, so a given name looks the same
+	// every time it sits down -- including the ones that never get a picture.
+	avatarShare = 90
 )
 
 // NewBots seats a crowd for a round that bursts at crash, spread across window
-// so they arrive a few at a time rather than all at once.
-func NewBots(crash Multiplier, window time.Duration, rnd *rand.Rand) []*Bot {
+// so they arrive a few at a time rather than all at once. names and avatars are
+// what the crowd is dealt from; either may be empty.
+func NewBots(crash Multiplier, window time.Duration, rnd *rand.Rand, names, avatars []string) []*Bot {
 	n := botsMin + rnd.IntN(botsMax-botsMin+1)
 
+	pool := names
+	if len(pool) == 0 {
+		pool = botNames
+	}
+	wears := wearers(pool)
+
 	bots := make([]*Bot, 0, n)
-	for i, name := range pickNames(n, rnd) {
+	for i, name := range pickNames(n, pool, rnd) {
 		b := &Bot{
-			ID:      fmt.Sprintf("b%d", i+1),
-			Name:    name,
-			Hue:     hueFor(name),
-			Initial: initialFor(name),
-			Bet:     drawBotBet(rnd),
-			JoinsAt: drawJoinDelay(window, rnd),
+			ID:       fmt.Sprintf("b%d", i+1),
+			Name:     name,
+			PhotoURL: avatarFor(name, avatars, wears[name]),
+			Hue:      hueFor(name),
+			Initial:  initialFor(name),
+			Bet:      drawBotBet(rnd),
+			JoinsAt:  drawJoinDelay(window, rnd),
 		}
 		// Strictly below: a bot aiming at the exact burst point is too late,
 		// same rule the human player plays under.
@@ -129,19 +145,60 @@ func drawBotBet(rnd *rand.Rand) int64 {
 	return 300 + int64(rnd.IntN(2200))
 }
 
-func pickNames(n int, rnd *rand.Rand) []string {
+// pickNames deals n distinct names off the pool. A pool too short to fill the
+// table shrinks the table rather than seating anyone twice: the same nickname
+// in two rows reads as a bug however honestly it got there.
+func pickNames(n int, pool []string, rnd *rand.Rand) []string {
+	if n > len(pool) {
+		n = len(pool)
+	}
+
 	picked := make([]string, 0, n)
-	for _, i := range rnd.Perm(len(botNames))[:n] {
-		picked = append(picked, botNames[i])
+	for _, i := range rnd.Perm(len(pool))[:n] {
+		picked = append(picked, pool[i])
 	}
 	return picked
 }
 
-func hueFor(name string) int {
-	h := fnv.New32a()
-	_, _ = h.Write([]byte(name))
-	return int(h.Sum32() % 360)
+// wearers picks which names in the pool get a picture: the share of them
+// whose name hashes lowest.
+//
+// Taking a share of the pool rather than rolling per name is what makes the
+// share the share. Rolling gets it right on average over a pool of any size,
+// but a pool is a fixed list of a few dozen, and one that happened to hash
+// badly would sit at eight in ten or ten in ten for good.
+func wearers(pool []string) map[string]bool {
+	ranked := make([]string, len(pool))
+	copy(ranked, pool)
+	sort.Slice(ranked, func(i, j int) bool {
+		return hashOf("wears:"+ranked[i]) < hashOf("wears:"+ranked[j])
+	})
+
+	out := make(map[string]bool, len(ranked))
+	for _, name := range ranked[:(len(ranked)*avatarShare+50)/100] {
+		out[name] = true
+	}
+	return out
 }
+
+// avatarFor settles which picture a name wears. It comes off the name, so a
+// bot's face is the same every round it turns up in -- a crowd whose faces
+// reshuffled every fifteen seconds would read as a slideshow rather than as a
+// room.
+func avatarFor(name string, avatars []string, wears bool) string {
+	if !wears || len(avatars) == 0 {
+		return ""
+	}
+	return avatars[hashOf("face:"+name)%uint32(len(avatars))]
+}
+
+func hashOf(s string) uint32 {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(s))
+	return h.Sum32()
+}
+
+func hueFor(name string) int { return int(hashOf(name) % 360) }
 
 // initialFor is the glyph drawn on the procedural avatar. Nicknames open with
 // all sorts of punctuation, so fall back to the first letter or digit anywhere
@@ -155,7 +212,8 @@ func initialFor(name string) string {
 	return "?"
 }
 
-// Invented handles. Real usernames off a live table belong to real people and
+// The fallback pool, used when assets/bot-names.txt is missing or empty.
+// Invented handles: real usernames off a live table belong to real people and
 // have no business being seeded into a clone.
 var botNames = []string{
 	"neonfox", "Артём", "kiroshi", "Мурка", "dropzone", "Витя",

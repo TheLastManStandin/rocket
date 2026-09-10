@@ -15,6 +15,7 @@ import (
 	"github.com/joho/godotenv"
 
 	"github.com/cahisa/racketka/internal/auth"
+	"github.com/cahisa/racketka/internal/botpack"
 	"github.com/cahisa/racketka/internal/config"
 	"github.com/cahisa/racketka/internal/game"
 	"github.com/cahisa/racketka/internal/httpapi"
@@ -23,6 +24,13 @@ import (
 	"github.com/cahisa/racketka/internal/storage"
 	"github.com/cahisa/racketka/internal/telegram"
 	"github.com/cahisa/racketka/internal/wallet"
+)
+
+// Where the crowd is dealt from, relative to the working directory the server
+// is started in -- the same way web/dist is.
+const (
+	botNamesFile = "assets/bot-names.txt"
+	botAvatarDir = "assets/bot-avatars"
 )
 
 func main() {
@@ -60,12 +68,23 @@ func run(log *slog.Logger) error {
 	}
 	log.Info("schema is up to date")
 
+	// The crowd's names and faces come off disk. Neither is required: without
+	// them the bots fall back to the built-in names and to a letter on a
+	// coloured disc, which is how they looked before the folder existed.
+	crowd, err := botpack.Load(botNamesFile, botAvatarDir, botpack.URLPrefix)
+	if err != nil {
+		log.Warn("could not read the bot pack", "error", err)
+	}
+	log.Info("bot pack", "names", len(crowd.Names), "avatars", len(crowd.Avatars))
+
 	purse := wallet.NewPostgres(store.Pool())
 	manager := session.NewManager(game.Config{
-		HouseEdge: cfg.HouseEdge,
-		MaxCrash:  cfg.MaxCrash,
-		MinBet:    cfg.MinBet,
-		MaxBet:    cfg.MaxBet,
+		HouseEdge:  cfg.HouseEdge,
+		MaxCrash:   cfg.MaxCrash,
+		MinBet:     cfg.MinBet,
+		MaxBet:     cfg.MaxBet,
+		BotNames:   crowd.Names,
+		BotAvatars: crowd.Avatars,
 	}, purse, store, log)
 	defer manager.Shutdown()
 
@@ -83,14 +102,15 @@ func run(log *slog.Logger) error {
 	srv := &http.Server{
 		Addr: cfg.Addr,
 		Handler: httpapi.NewRouter(httpapi.Deps{
-			Config:   cfg,
-			Store:    store,
-			Wallet:   purse,
-			Payments: payer,
-			Manager:  manager,
-			Issuer:   auth.NewIssuer(cfg.JWTSecret, cfg.JWTTTL),
-			Logger:   log,
-			WebRoot:  "web/dist",
+			Config:        cfg,
+			Store:         store,
+			Wallet:        purse,
+			Payments:      payer,
+			Manager:       manager,
+			Issuer:        auth.NewIssuer(cfg.JWTSecret, cfg.JWTTTL),
+			Logger:        log,
+			WebRoot:       "web/dist",
+			BotAvatarRoot: botAvatarDir,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		// No WriteTimeout on purpose: it would cut every websocket at the

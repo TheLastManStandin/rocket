@@ -51,6 +51,12 @@ type Config struct {
 	BettingWindow time.Duration
 	CrashedPause  time.Duration
 
+	// BotNames and BotAvatars are what the crowd is dealt from, loaded off
+	// disk at start-up. Empty names fall back to the built-in list; empty
+	// avatars leave every bot with the letter on a coloured disc.
+	BotNames   []string
+	BotAvatars []string
+
 	// DrawCrash decides where a round bursts. Nil in production, where the
 	// secure draw is used; tests pin it to make a round reproducible.
 	DrawCrash func() Multiplier
@@ -266,7 +272,7 @@ func (g *Game) openRound(now time.Time) []Event {
 	g.round = Round{
 		ID:        g.nextID,
 		Crash:     crash,
-		Bots:      NewBots(crash, g.cfg.BettingWindow, g.rnd),
+		Bots:      NewBots(crash, g.cfg.BettingWindow, g.rnd, g.cfg.BotNames, g.cfg.BotAvatars),
 		Phase:     PhaseBetting,
 		OpenedAt:  now,
 		PhaseEnds: now.Add(g.cfg.BettingWindow),

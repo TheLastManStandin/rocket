@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/cahisa/racketka/internal/auth"
+	"github.com/cahisa/racketka/internal/botpack"
 	"github.com/cahisa/racketka/internal/config"
 	"github.com/cahisa/racketka/internal/payments"
 	"github.com/cahisa/racketka/internal/session"
@@ -39,6 +40,10 @@ type Deps struct {
 	Issuer   *auth.Issuer
 	Logger   *slog.Logger
 	WebRoot  string
+	// BotAvatarRoot is the folder the bot avatars are dropped into. It is
+	// served straight off disk rather than through the frontend build, so
+	// adding a face is copying a file in and restarting.
+	BotAvatarRoot string
 }
 
 func NewRouter(d Deps) http.Handler {
@@ -56,6 +61,10 @@ func NewRouter(d Deps) http.Handler {
 		Accounts: d.Store,
 		Logger:   d.Logger,
 	}))
+	if d.BotAvatarRoot != "" {
+		mux.Handle("GET "+botpack.URLPrefix+"/", http.StripPrefix(botpack.URLPrefix+"/",
+			http.FileServer(http.Dir(d.BotAvatarRoot))))
+	}
 	mux.Handle("/", spa(d.WebRoot))
 
 	if d.Config.DevMode {

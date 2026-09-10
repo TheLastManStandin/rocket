@@ -131,6 +131,13 @@ body {
   height: 40px;
 }
 
+/* The same mark the table carries beside a payout, blown up to fill the win
+   sheet -- the sum is the prize here, so the star is the picture of it. */
+.star--win {
+  width: 88px;
+  height: 88px;
+}
+
 /* ---------- top bar ---------- */
 
 .topbar {
@@ -519,6 +526,34 @@ body {
 .sheet-body--topup {
   min-height: 0;
   gap: 12px;
+}
+
+/* ---------- win ---------- */
+
+.sheet-body--win {
+  min-height: 0;
+  gap: 12px;
+  align-items: center;
+}
+
+.win-prize {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 12px 0 4px;
+}
+
+.win-amount {
+  color: var(--positive);
+  font-size: 44px;
+  line-height: 1;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.sheet-body--win .sheet-cta {
+  margin-top: 20px;
 }
 
 .segment {

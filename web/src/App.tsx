@@ -7,6 +7,7 @@ import { HistoryStrip } from "./components/HistoryStrip";
 import { PlayersList } from "./components/PlayersList";
 import { Star, StarDefs } from "./components/Star";
 import { TopUpSheet } from "./components/TopUpSheet";
+import { WinSheet } from "./components/WinSheet";
 import { authenticate } from "./lib/api";
 import { haptic, prepare } from "./lib/telegram";
 import type { AuthResponse } from "./lib/types";
@@ -36,6 +37,7 @@ export function App() {
 
   useSettlementHaptics(state.phase, state.bet);
   useAutoCashOut(state, autoCashOut, cashOut);
+  const [win, dismissWin] = useWinSheet(state);
 
   // The menu stays valid whatever the round is doing -- outside the window it
   // takes bets on the next one -- so it closes on the stake landing, not on
@@ -83,6 +85,7 @@ export function App() {
           phase={state.phase}
           multiplier={state.multiplier}
           phaseEndsAt={state.phaseEndsAt}
+          mine={state.bet !== null}
         />
 
         <HistoryStrip history={state.history} phase={state.phase} current={state.multiplier} />
@@ -123,8 +126,46 @@ export function App() {
           onClose={() => setToppingUp(false)}
         />
       )}
+
+      {win && (
+        <WinSheet payout={win.payout} cashedOutAt={win.cashedOutAt} onClose={dismissWin} />
+      )}
     </main>
   );
+}
+
+/**
+ * Holds the cash-out that is waiting to be shown, from the moment the server
+ * confirms it until the player closes the sheet or the next round opens.
+ *
+ * It reads the settlement rather than the tap: the button only asks, and a
+ * request that arrives after the round has burst wins nothing. Once per round,
+ * so a reconnect that replays the snapshot does not pop the sheet a second
+ * time.
+ */
+function useWinSheet(state: CrashState): [Win | null, () => void] {
+  const [win, setWin] = useState<Win | null>(null);
+  const shownFor = useRef<number | null>(null);
+
+  useEffect(() => {
+    const bet = state.bet;
+    if (!bet || bet.cashedOutAt === undefined) return;
+    if (shownFor.current === state.roundId) return;
+
+    shownFor.current = state.roundId;
+    setWin({ payout: bet.payout ?? 0, cashedOutAt: bet.cashedOutAt });
+  }, [state.bet, state.roundId]);
+
+  // A sheet left open is closed by the next round rather than sitting over a
+  // board that has already moved on.
+  useEffect(() => setWin(null), [state.roundId]);
+
+  return [win, () => setWin(null)];
+}
+
+interface Win {
+  payout: number;
+  cashedOutAt: number;
 }
 
 /** One buzz when the round settles, in whichever direction. */

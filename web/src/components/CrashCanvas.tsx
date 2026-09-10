@@ -10,6 +10,8 @@ interface Props {
   multiplier: number;
   /** Absolute time the betting window shuts, for the countdown. */
   phaseEndsAt: number | null;
+  /** Whether the round in the air carries a stake of the player's own. */
+  mine: boolean;
 }
 
 interface Spark {
@@ -166,23 +168,25 @@ interface Box {
  * the sparkles run the full width of the screen and carry on behind the chips
  * and the table, and only the curve is boxed in.
  */
-export function CrashCanvas({ phase, multiplier, phaseEndsAt }: Props) {
+export function CrashCanvas({ phase, multiplier, phaseEndsAt, mine }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const boardRef = useRef<HTMLDivElement>(null);
   const carrotRef = useRef<HTMLDivElement>(null);
+  const bearRef = useRef<HTMLDivElement>(null);
   const burstRef = useRef<HTMLDivElement>(null);
 
   // The render loop reads the latest values through a ref, so it is set up once
   // and never torn down as props change.
-  const latest = useRef({ phase, multiplier, phaseEndsAt });
-  latest.current = { phase, multiplier, phaseEndsAt };
+  const latest = useRef({ phase, multiplier, phaseEndsAt, mine });
+  latest.current = { phase, multiplier, phaseEndsAt, mine };
 
   useEffect(() => {
     const canvas = canvasRef.current;
     const boardEl = boardRef.current;
     const carrotEl = carrotRef.current;
+    const bearEl = bearRef.current;
     const burstEl = burstRef.current;
-    if (!canvas || !boardEl || !carrotEl || !burstEl) return;
+    if (!canvas || !boardEl || !carrotEl || !bearEl || !burstEl) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
@@ -213,13 +217,18 @@ export function CrashCanvas({ phase, multiplier, phaseEndsAt }: Props) {
     let burstStart: number | null = null;
     let numberSince: number | null = null;
 
-    const carrotAnim: AnimationItem = lottie.loadAnimation({
-      container: carrotEl,
-      renderer: "svg",
-      loop: true,
-      autoplay: false,
-      path: "/lottie/bunny-anim.json",
-    });
+    // Two clips share the curve's tip and only one of them is ever on screen.
+    // The reference board swaps the rider for whatever the round is playing
+    // for once a stake is down; here there is nothing to play for but the
+    // Stars, so the swap is the whole of it: the bear rides your rounds.
+    const riders: Rider[] = [
+      { el: carrotEl, anim: rider(carrotEl, "/lottie/bunny-anim.json") },
+      { el: bearEl, anim: rider(bearEl, "/lottie/bear-anim.json") },
+    ];
+    // Index into riders, not a boolean: the loop below only ever wants "the
+    // one riding" and "the one that is not".
+    let riding = 0;
+
     const burstAnim: AnimationItem = lottie.loadAnimation({
       container: burstEl,
       renderer: "svg",
@@ -250,8 +259,10 @@ export function CrashCanvas({ phase, multiplier, phaseEndsAt }: Props) {
 
       carrotSize = Math.min(CARROT_SIZE, board.w * 0.57);
       const burstSize = Math.min(BURST_SIZE, board.w * 0.7);
-      carrotEl.style.width = `${carrotSize}px`;
-      carrotEl.style.height = `${carrotSize}px`;
+      for (const r of riders) {
+        r.el.style.width = `${carrotSize}px`;
+        r.el.style.height = `${carrotSize}px`;
+      }
       burstEl.style.width = `${burstSize}px`;
       burstEl.style.height = `${burstSize}px`;
     };
@@ -290,15 +301,26 @@ export function CrashCanvas({ phase, multiplier, phaseEndsAt }: Props) {
       }
       const flown = flightStart === null ? 0 : (now - flightStart) / 1000;
 
+      // Who rides is settled before the take-off -- a stake taken while a
+      // round is in the air is queued for the next one -- so in practice this
+      // swaps between rounds and never mid-flight.
+      const wanted = state.mine ? 1 : 0;
+      if (wanted !== riding) {
+        riders[riding].anim.stop();
+        riding = wanted;
+        if (state.phase === "flying") riders[riding].anim.play();
+      }
+      const rider = riders[riding];
+
       if (state.phase === "flying" && prevPhase !== "flying") {
-        carrotAnim.play();
+        rider.anim.play();
         // A fresh flight starts from the corner. Without this the clip would
         // be planted at last round's hover point for the first frame and read
         // as jumping back down to the start.
         tip.x = board.x + board.w * START_X;
         tip.y = board.y + board.h * START_Y;
       }
-      if (state.phase !== "flying" && prevPhase === "flying") carrotAnim.stop();
+      if (state.phase !== "flying" && prevPhase === "flying") rider.anim.stop();
 
       if (state.phase === "crashed" && prevPhase !== "crashed") {
         burstStart = elapsed;
@@ -338,12 +360,14 @@ export function CrashCanvas({ phase, multiplier, phaseEndsAt }: Props) {
       // After the draw, not before it: the curve is what works out where the
       // tip is this frame, and reading it beforehand leaves the clip a frame
       // behind the trail it is supposed to be riding.
-      carrotEl.style.visibility = state.phase === "flying" ? "visible" : "hidden";
+      for (const r of riders) {
+        r.el.style.visibility = state.phase === "flying" && r === rider ? "visible" : "hidden";
+      }
       if (state.phase === "flying") {
         // The clips live inside the board, the tip is in stage coordinates.
-        carrotEl.style.left = `${tip.x - board.x}px`;
-        carrotEl.style.top = `${tip.y - board.y}px`;
-        carrotEl.style.opacity = String(fadeIn(flown));
+        rider.el.style.left = `${tip.x - board.x}px`;
+        rider.el.style.top = `${tip.y - board.y}px`;
+        rider.el.style.opacity = String(fadeIn(flown));
       }
 
       frame = requestAnimationFrame(render);
@@ -353,7 +377,7 @@ export function CrashCanvas({ phase, multiplier, phaseEndsAt }: Props) {
     return () => {
       cancelAnimationFrame(frame);
       observer.disconnect();
-      carrotAnim.destroy();
+      for (const r of riders) r.anim.destroy();
       burstAnim.destroy();
     };
   }, []);
@@ -363,10 +387,27 @@ export function CrashCanvas({ phase, multiplier, phaseEndsAt }: Props) {
       <canvas ref={canvasRef} className="stage-canvas" />
       <div ref={boardRef} className="board">
         <div ref={carrotRef} className="crash-lottie" />
+        <div ref={bearRef} className="crash-lottie" />
         <div ref={burstRef} className="crash-burst" />
       </div>
     </>
   );
+}
+
+/** One of the clips that can ride the curve's tip, and the box it draws into. */
+interface Rider {
+  el: HTMLDivElement;
+  anim: AnimationItem;
+}
+
+function rider(container: HTMLDivElement, path: string): AnimationItem {
+  return lottie.loadAnimation({
+    container,
+    renderer: "svg",
+    loop: true,
+    autoplay: false,
+    path,
+  });
 }
 
 type Board = { phase: Phase; multiplier: number; phaseEndsAt: number | null };

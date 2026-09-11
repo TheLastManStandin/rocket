@@ -1,54 +1,176 @@
 # Имена ботов, по одному в строке. Пустые строки и строки с # игнорируются.
 # Файл читается один раз при старте сервера.
 #
-# Настоящие ники с живого стола принадлежат живым людям, и им нечего делать
-# в клоне: здесь только выдуманные.
+# Импортировано из списка участников Telegram-группы «ОМ: Бэкенд» 2026-09-10.
+# Это настоящие имена живых людей, а не выдуманные.
+# Прежний выдуманный список лежит рядом в bot-names.invented.txt.
 
-neonfox
-Артём
-kiroshi
-Мурка
-dropzone
-Витя
-slonik
-Лиса
-mrblack
-Настя
-zerocool
-Костя
-pixel
-Аня
-tundra
-Дима
-voidcat
-Соня
-grumpy
-Марк
-lunar
-Ева
-toxic
+Родион
+PyranGotan
+moryachok
+ТА
+я саша
+Никита Матюхин
+Артур
+Кирилл
+FЁDOR DRAKON
+Эдуард
 Илья
-shadow
-Рита
-nomad
-Гоша
-quartz
-Юля
-burnout
-Слава
-echo
-Полина
-vandal
+Федор Эмочкин
+S V
+Ilya
+Sergey Zhukov
+Король Горох
+tpanswer4
+Владислав Кудельников
+Aleksandr
+Peter Kalugin
+Joe Black
+Kazett
+Scrooge McDuck
+Влад
+Mikhail P
+Даниил
+Artêm
+Emillennium
+Сухоцветов
+Nikolai Sann
+Никита Ваганов
+Nikolay Andreev
+Алексей Новиков
+Morgan
+Vladislave
+Свят
+Kirill
+Alex
+Vitalii S
+Лирик
 Тимур
-onyx
-Даша
-raven
-Егор
-flux
-Вера
-static
-Лёша
-crimson
-Ника
-husky
-Рома
+Ivan
+Ростислав
+Danil
+Nikita
+Maks
+Ivan Prodan
+Игорь
+Ви
+Voxel Wolf
+львёнок
+AK
+4frag
+Online
+Лип
+Rodion
+Азамат
+Vlad
+Kel
+Andrey Litvishchenko
+Sergey Tyurikov
+Gosha Gvasalia
+Egor Smirnov
+Владислав
+Savches
+Valentin
+Yana Smirnova
+doncallm
+Эмиль
+Maksim Pozharskiy
+Evgeniy
+Max Dendy
+knnv
+Wolf Gatekeeper
+Денис Юдин
+𓏵 devops ୨ৎ
+Oксана
+Иван Разраб
+Yegor
+Slava Mashkov
+Дима
+Rodion Bozhenko
+Adam
+бываеть
+Darya Grishina
+Andrey V
+виктор
+Константин
+Евгений
+NoOne
+Vladimir Pushkarev
+Misha
+her royal majesty
+Olga
+Ramil
+Александр
+kasp
+Николай
+Иван
+Никита
+Grigoriy
+Макс
+Виталий
+Вячеслав
+qwilton
+Last One
+Ярослав
+Sergei
+Aleks
+Pavel
+Alexander
+Amina
+Миша Б
+Arm
+Nelson Mandela
+A A
+shadowpixel
+Daniil Koreshkov
+Dmitriy Karaulov
+Сергей Герасимов
+Andrei Golubkov
+Yuli
+Артём
+Роман
+Gleb Ivanov
+Аутстафф
+Leftover
+Alexey
+Максим
+Дзе
+Дмитрий
+Valentine
+Jupi
+Leonid
+Pavel Vilkov
+daniil shevcov
+Смерть в нищете
+Илья Астафьев
+Сергей
+Vladimir
+Asfel
+Svetlana Romanova
+T F
+Kate Guselnikova
+Alex A
+Менеджер Назарова
+Kirill Levchenko
+nobody_101
+Мишаня
+Роберт
+Maksim Bugaev
+Олег
+Григорий
+Timur
+Vladislav Koniukhov
+A Н
+Carmix
+Амир
+Дмитрий Маслов
+Nikolai
+Хасе
+Artem
+Данил
+АБ
+Egor
+Andrey S
+Tnqybmfhq Njxpztnypt
+Dmitry
+Бот-Помощник ОМ

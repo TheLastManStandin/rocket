@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import confetti from "canvas-confetti";
 
 import { format } from "../lib/multiplier";
@@ -12,16 +12,16 @@ interface Props {
   onClose: () => void;
 }
 
-/** The burst that goes off with the sheet, matched to the reference board's. */
+/** The burst that goes off with the sheet. */
 const CONFETTI_COUNT = 120;
 const CONFETTI_SPREAD = 80;
 /**
- * How far down the sheet the burst starts, as a fraction of its height. The
- * reference fires from a quarter of the way in, which on a sheet this tall
- * puts the origin off the bottom of the screen -- so the confetti comes up
- * from below the edge and falls back through the sheet.
+ * How hard the confetti is thrown, in pixels of the first frame's travel. The
+ * library's own default carries a burst about two thirds of the way up from
+ * the middle of a phone screen; this one is fired off the bottom edge, so it
+ * has the whole height to climb and needs the extra to clear it.
  */
-const CONFETTI_DEPTH = 0.25;
+const CONFETTI_VELOCITY = 68;
 
 /**
  * What a cash-out looks like: the same sheet the stake was placed from, with
@@ -33,30 +33,21 @@ const CONFETTI_DEPTH = 0.25;
  * nothing.
  */
 export function WinSheet({ payout, cashedOutAt, onClose }: Props) {
-  const sheetRef = useRef<HTMLDivElement>(null);
-
   useEffect(() => {
-    const sheet = sheetRef.current;
-    if (!sheet) return;
-
-    // offsetHeight, not the bounding box: the sheet is mid-rise on this frame
-    // and its box is still off the bottom of the screen. The height is what
-    // the transform does not touch, and the sheet is anchored to the bottom,
-    // so this is where it is about to come to rest.
-    const top = window.innerHeight - sheet.offsetHeight;
-    const y = (top + sheet.offsetHeight * CONFETTI_DEPTH) / window.innerHeight;
-
+    // Off the bottom edge of the screen, not off the sheet: the confetti is
+    // fired up past the sheet from under it, rather than out of its middle.
     confetti({
       particleCount: CONFETTI_COUNT,
       spread: CONFETTI_SPREAD,
-      origin: { x: 0.5, y: Math.min(1, Math.max(0, y)) },
+      startVelocity: CONFETTI_VELOCITY,
+      origin: { x: 0.5, y: 1 },
     });
   }, []);
 
   return (
     <div className="sheet-backdrop" onClick={onClose}>
       {/* The sheet swallows taps so only the backdrop closes it. */}
-      <div className="sheet" ref={sheetRef} onClick={(e) => e.stopPropagation()}>
+      <div className="sheet" onClick={(e) => e.stopPropagation()}>
         <div className="sheet-grip-row">
           <span className="sheet-grip" />
         </div>
